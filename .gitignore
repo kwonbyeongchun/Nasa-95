@@ -1,0 +1,10 @@
+build/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+python/openfep/*.pyd
+python/openfep/*.pdb
+.vs/
+CMakeUserPresets.json
+python/openfep/_dll_dirs.txt
