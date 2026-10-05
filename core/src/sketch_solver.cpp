@@ -7,9 +7,9 @@
 #include <map>
 #include <set>
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -474,4 +474,4 @@ std::array<double, 2> sketch_point_position(const Json& entities, const Json& sp
   return {p.x, p.y};
 }
 
-}  // namespace ofep
+}  // namespace nasa95

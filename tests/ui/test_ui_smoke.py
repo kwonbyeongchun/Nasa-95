@@ -11,7 +11,7 @@ _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 sys.path.insert(0, os.path.join(_root, "python"))
 
 pytest.importorskip("PySide6")
-from openfep import App  # noqa: E402
+from nasa95 import App  # noqa: E402
 
 if os.environ.get("QT_QPA_PLATFORM", "").lower() in ("offscreen", "minimal") or not os.environ.get("SESSIONNAME", "Console"):
     pytest.skip("바탕 화면 세션이 없습니다", allow_module_level=True)
@@ -44,7 +44,7 @@ def pump(qt, ms=150):
 @pytest.mark.feature("RND-02")
 @pytest.mark.feature("WT-01")
 def test_UI_window_presents_frames(qt):
-    from openfep.ui import MainWindow
+    from nasa95.ui import MainWindow
     app = App()
     part = app.model.parts.create(name="BOX")
     part.features.create_box(size=[100.0, 20.0, 10.0])
@@ -96,7 +96,7 @@ def test_UI_rest_calls_run_on_gui_thread(qt):
     import json
     import threading
     import urllib.request
-    from openfep.ui import MainWindow
+    from nasa95.ui import MainWindow
     app = App()
     w = MainWindow(app)
     w.show()
@@ -131,7 +131,7 @@ def test_UI_rest_calls_run_on_gui_thread(qt):
 def test_UI_mesh_job_dialog_keeps_ui_responsive(qt):
     """자동 메싱은 작업 스레드에서 돌고, 창은 도는 동안 이벤트를 처리하며 끝나면 결과를 모델에 넣는다."""
     import time
-    from openfep.ui import MainWindow
+    from nasa95.ui import MainWindow
     app = App()
     part = app.model.parts.create(name="BOX")
     part.features.create_box(size=[100.0, 50.0, 20.0])
@@ -156,9 +156,9 @@ def test_UI_mesh_job_dialog_keeps_ui_responsive(qt):
 def test_UI_extension_adds_menu(qt, tmp_path, monkeypatch):
     """켜진 확장의 ui(window) 가 주 창에 메뉴를 더한다."""
     import pathlib
-    from openfep.ui import MainWindow
-    monkeypatch.setenv("OFEP_EXTENSIONS", str(pathlib.Path(__file__).resolve().parents[2] / "examples" / "extensions"))
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui import MainWindow
+    monkeypatch.setenv("NASA95_EXTENSIONS", str(pathlib.Path(__file__).resolve().parents[2] / "examples" / "extensions"))
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     assert "hello.count_materials" in {c["name"] for c in app.commands()}
     w = MainWindow(app)
@@ -171,9 +171,9 @@ def test_UI_extension_adds_menu(qt, tmp_path, monkeypatch):
 def test_UI_ext_register_ui_items(qt, tmp_path, monkeypatch):
     """ext.register_menu/toolbar/panel/dialog/tree_action 이 주 창에 항목을 더한다 — 창이 뜨기 전에 등록한 것과 뜬 뒤에 등록한 것 모두."""
     from PySide6.QtWidgets import QDockWidget, QToolBar
-    from openfep.ui import MainWindow
-    monkeypatch.setenv("OFEP_EXTENSIONS", str(tmp_path / "none"))
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui import MainWindow
+    monkeypatch.setenv("NASA95_EXTENSIONS", str(tmp_path / "none"))
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     app.execute("ext.register_command", name="my.count", kind="Q", desc="재료 수",
                 code="def run(app, params):\n    return {'count': len(app.execute('material.list'))}\n")
@@ -210,9 +210,9 @@ def test_UI_sketch_mode_extension_draws_with_mouse(qt, tmp_path, monkeypatch):
     from PySide6.QtCore import QEvent, QPointF, Qt
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QApplication
-    from openfep.ui import MainWindow
-    monkeypatch.setenv("OFEP_EXTENSIONS", str(pathlib.Path(__file__).resolve().parents[2] / "examples" / "extensions"))
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui import MainWindow
+    monkeypatch.setenv("NASA95_EXTENSIONS", str(pathlib.Path(__file__).resolve().parents[2] / "examples" / "extensions"))
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     part = app.model.parts.create(name="P")
     part.features.create_box(size=[40.0, 30.0, 10.0])
@@ -275,9 +275,9 @@ def test_UI_result_workspace_switch_and_outdated(qt, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S  # noqa: E402  (ccx 찾기·외팔보 만들기)
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
-    from openfep.ui import MainWindow
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui import MainWindow
     app = App()
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(6, 2, 2))
     step = case.steps.create_static()
@@ -333,8 +333,8 @@ def test_UI_result_workspace_switch_and_outdated(qt, tmp_path, monkeypatch):
 def test_UI_material_dialog_units_and_db(qt, tmp_path, monkeypatch):
     """재료 창(사용자 요청): 값마다 입력 상자 + 단위(모델 단위계), 확인하면 구성 모델이 명령으로 들어간다. DB 창에서 고른 재료는 바로 추가되고
     값은 모델 단위계로 환산돼 있다. 편집 창은 저장된 값을 상자에 되돌려 보인다."""
-    from openfep.ui.material_dialog import MaterialDbDialog, MaterialDialog, add_from_db
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui.material_dialog import MaterialDbDialog, MaterialDialog, add_from_db
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     dlg = MaterialDialog(app)
     assert dlg.edits["E"].unit.text() == "MPa" and dlg.edits["density"].unit.text() == "t/mm³" and dlg.edits["nu"].unit.text() == ""
@@ -384,9 +384,9 @@ def test_UI_case_dialog_picks_sets_and_mesh(qt, tmp_path, monkeypatch):
     """해석 케이스 창(D14): 메시·하중 셋(계수)·구속 셋·해석 종류를 골라 케이스+스텝+기본 출력을 만든다. 하중은 하중 셋 안에,
     구속은 구속 셋 안에 들어가고(리본의 부모 결정 _parent_for), 덱에 셋의 항목이 계수와 함께 나간다."""
     from PySide6.QtCore import Qt
-    from openfep.ui import MainWindow
-    from openfep.ui.case_dialog import CaseDialog
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui import MainWindow
+    from nasa95.ui.case_dialog import CaseDialog
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     part = app.model.parts.create(name="bar")
     part.features.create_box(size=[20.0, 5.0, 5.0])
@@ -407,25 +407,111 @@ def test_UI_case_dialog_picks_sets_and_mesh(qt, tmp_path, monkeypatch):
     assert w._parent_for("load") == D.id
     S.bcs.create_displacement(target={"type": "nodes", "ids": [1]}, dofs=[1, 2, 3])
     dlg = CaseDialog(app, parent=w)
-    assert dlg.mesh_list.count() == 1 and dlg.load_table.rowCount() == 1 and dlg.bc_list.count() == 1
+    assert len(dlg._source_items) == 3 and not dlg.selected_mesh()
     dlg.name.setText("gravity_case")
-    dlg.load_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    dlg.load_table.item(0, 2).setText("1.35")
-    dlg.bc_list.item(0).setCheckState(Qt.CheckState.Checked)
+    dlg._add(list(dlg._source_items.values()))
+    dlg._selected_items[(0, "load_set", D.id)].setText(1, "1.35")
     dlg._apply()
     assert dlg.result_id
     case = app.execute("case.get", id=dlg.result_id)
     step = app.execute("step.list", parent=case["id"])[0]
     sp = app.execute("step.get", id=step["id"])["props"]
     assert case["name"] == "gravity_case" and sp["type"] == "static" and sp["load_sets"] == [{"set": D.id, "factor": 1.35}] and sp["bc_sets"] == [S.id]
-    assert "scope" not in case["props"]  # 메시 전부 → 범위 없음
+    assert case["props"]["scope"] == {"type": "parts", "ids": [mp]}  # 오른쪽에 포함한 메시만 사용
     assert {app.execute("output_request.get", id=o["id"])["props"]["type"] for o in app.execute("output_request.list", parent=step["id"])} == {"node_file", "element_file"}
     deck = app.execute("case.preview_deck", id=case["id"], max_lines=500)["text"]
     assert "GRAV, 13243.5" in deck and "*BOUNDARY" in deck and app.execute("case.check", id=case["id"]) == []
     # 편집 창: 저장된 선택이 돌아오고, 계수를 바꾸면 반영
     edit = CaseDialog(app, parent=w, step=app.execute("step.get", id=step["id"]))
-    assert edit.load_table.item(0, 0).checkState() == Qt.CheckState.Checked and edit.load_table.item(0, 2).text() == "1.35"
-    edit.load_table.item(0, 2).setText("1")
+    assert edit.selected_mesh() == [mp] and edit.selected_load_sets() == [{"set": D.id, "factor": 1.35}]
+    edit._selected_items[(step["id"], "load_set", D.id)].setText(1, "1")
     edit._apply()
     assert app.execute("step.get", id=step["id"])["props"]["load_sets"] == [{"set": D.id, "factor": 1.0}]
+    # 저장 후 해석은 같은 케이스의 기존 실행 경로를 사용한다.
+    run_dialog = CaseDialog(app, parent=w, step=app.execute("step.get", id=step["id"]))
+    run_dialog._apply(run=True)
+    assert run_dialog.run_requested and run_dialog.result_id == case["id"]
+    launched = []
+    monkeypatch.setattr(w, "_run_case", lambda: launched.append(w._selected))
+    w._selected = ("case", run_dialog.result_id)
+    w._case_dialog_finished(run_dialog)
+    assert launched == [("case", case["id"])]
     w.close()
+
+
+@pytest.mark.feature("PRP-05")
+@pytest.mark.feature("PRP-07")
+def test_UI_beam_dialog_sections_preview_direction(qt, tmp_path, monkeypatch):
+    """보 프로퍼티 창(D15): 단면 종류에 맞는 치수 상자(단위 표시)만 보이고, 미리보기가 부분 직사각형(형강은 합성보 분해)을 받으며,
+    1축 방향은 전역 축 선택 또는 벡터, 확인하면 property.create_beam 으로 들어간다. 편집 창은 저장된 값을 되돌려 보인다."""
+    from nasa95.ui.beam_dialog import BeamDialog, SECTIONS
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
+    app = App()
+    mat = app.model.materials.create(name="S")
+    n = app.execute("mesh.nodes_create", coords=[[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]])["first"]
+    beam = app.execute("mesh.elements_create", shape="line2", connectivity=[[n, n + 1]])["first"]
+    dlg = BeamDialog(app)
+    dlg.section.setCurrentIndex(list(SECTIONS).index("I"))
+    visible = [ed for label, ed in dlg.dim_rows if not ed.isHidden()]
+    assert len(visible) == 4 and visible[0].unit.text() == "mm" and dlg.dim_rows[0][0].text().startswith("높이 h")
+    for ed, v in zip(visible, ("100", "60", "6", "8")):
+        ed.edit.setText(v)
+    assert dlg.preview.shape and len(dlg.preview.shape["rects"]) == 3 and dlg.preview.shape["extent"] == [100.0, 60.0]
+    assert "합성보" in dlg.values_label.text()
+    dlg.material.setCurrentIndex(1)
+    dlg.direction.setCurrentIndex(0)  # +Z
+    dlg.offset1.edit.setText("0.5")
+    dlg.target.target_type.setCurrentText("elements")
+    dlg.target.target_ids.setText(str(beam))
+    dlg.name.setText("H100")
+    dlg._apply()
+    assert dlg.result_id
+    p = app.execute("property.get", id=dlg.result_id)["props"]
+    assert p["type"] == "beam" and p["section"] == "I" and p["dimensions"] == [100.0, 60.0, 6.0, 8.0]
+    assert p["direction"] == [0.0, 0.0, 1.0] and p["offset1"] == 0.5 and p["material"] == mat.id and p["target"] == {"type": "elements", "ids": [beam]}
+    # 편집: 값이 돌아오고, 방향을 직접 입력으로 바꾸면 벡터로 저장
+    edit = BeamDialog(app, obj=app.execute("property.get", id=dlg.result_id))
+    assert edit.section.currentData() == "I" and [ed.edit.text() for _l, ed in edit.dim_rows[:4]] == ["100", "60", "6", "8"]
+    assert edit.direction.currentText() == "+Z" and edit.offset1.edit.text() == "0.5"
+    edit.direction.setCurrentIndex(edit.direction.count() - 1)
+    edit.direction_edit.setText("0, 1, 0")
+    edit.section.setCurrentIndex(list(SECTIONS).index("rect"))  # 치수 2개만 남는다
+    assert sum(not ed.isHidden() for _l, ed in edit.dim_rows) == 2
+    edit._apply()
+    p = app.execute("property.get", id=dlg.result_id)["props"]
+    assert p["section"] == "rect" and p["dimensions"] == [100.0, 60.0] and p["direction"] == [0.0, 1.0, 0.0]
+    # 치수가 모자라면 오류 글, 모델은 그대로
+    bad = BeamDialog(app)
+    bad.section.setCurrentIndex(list(SECTIONS).index("T"))
+    bad._apply()
+    assert "치수" in bad.error.text() and bad.result_id is None
+
+
+@pytest.mark.feature("PRP-05")
+def test_UI_beam_dialog_section_db(qt, tmp_path, monkeypatch):
+    """표준 형강 목록 창: 규격·계열·이름으로 거르고, 고른 줄이 보 창의 종류·치수·이름을 채운다(박스는 벽 4개 미리보기)."""
+    from nasa95.ui.beam_dialog import BeamDialog, SectionDbDialog
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
+    app = App()
+    db = SectionDbDialog(app)
+    assert db.table.rowCount() > 200 and "mm" in db.table.horizontalHeaderItem(4).text()
+    db.standard.setCurrentText("KS")
+    db.series.setCurrentText("H")
+    db.filter.setText("400x200")
+    assert db.table.rowCount() == 1 and db.table.item(0, 0).text() == "H-400x200x8x13"
+    db.table.selectRow(0)
+    row = db.selected()
+    assert row["section"] == "I" and row["dimensions"] == [400.0, 200.0, 8.0, 13.0]
+    dlg = BeamDialog(app)
+    dlg.apply_library_row(row)
+    assert dlg.section.currentData() == "I" and dlg.name.text() == "H-400x200x8x13" and dlg.dimensions() == [400.0, 200.0, 8.0, 13.0]
+    assert dlg.preview.shape and len(dlg.preview.shape["rects"]) == 3
+    db.standard.setCurrentText("EN")
+    db.series.setCurrentText("SHS")
+    db.filter.setText("")
+    db.table.selectRow(0)
+    dlg.apply_library_row(db.selected())
+    assert dlg.section.currentData() == "box" and dlg.name.text() == "SHS_40x40x3" and len(dlg.preview.shape["rects"]) == 4
+    dlg.material.setCurrentIndex(0)
+    dlg._apply()
+    assert dlg.result_id and app.execute("property.get", id=dlg.result_id)["props"]["dimensions"] == [40.0, 40.0, 3.0, 3.0, 3.0, 3.0]

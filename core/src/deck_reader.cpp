@@ -19,10 +19,10 @@
 #include <optional>
 #include <set>
 
-#include "ofep/deck.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/deck.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -2060,4 +2060,4 @@ Json import_deck(App& app, const std::string& path) {
   return r;
 }
 
-}  // namespace ofep
+}  // namespace nasa95

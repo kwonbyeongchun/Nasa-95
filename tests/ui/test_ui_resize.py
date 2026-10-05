@@ -9,7 +9,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QEventLoop, QTimer
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
-from openfep.ui.viewport import Viewport
+from nasa95.ui.viewport import Viewport
 
 
 @pytest.fixture

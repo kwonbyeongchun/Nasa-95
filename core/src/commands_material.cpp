@@ -3,10 +3,10 @@
 #include <fstream>
 #include <set>
 
-#include "ofep/app.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -376,4 +376,4 @@ void register_material_commands(App& app) {
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

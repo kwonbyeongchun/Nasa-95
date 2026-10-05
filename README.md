@@ -1,9 +1,10 @@
-# open-fep
+# NASA-95
 
-CalculiX 용 CAE Pre/Post 프로세서. 구현 진행 중이다.
+CAE Pre/Post 프로세서(유한요소 해석 전·후처리). 모델은 솔버 중립이고 CalculiX·OpenSees·MyStran 을 별도 실행 파일로 돌린다. 구현 진행 중이다.
+(2026-10-05 까지의 이름은 open-fep 였다. 저장소를 https://github.com/kwonbyeongchun/Nasa-95.git 로 옮기면서 패키지 `nasa95`·모듈 `_nasa95`·환경 변수 `NASA95_*`·프로젝트 파일 `.nasa95` 로 바꿨다. 옛 `.ofep` 프로젝트 파일은 그대로 열린다.)
 
 - 설계·계획 문서: 작업 저장소 `open-fep-works` (`agent.md`, `.agent/`, `plans/`)
-- 구성: C++ 코어(`core/`, OpenCASCADE 형상·Netgen 메싱) + Vulkan 렌더러(`render/`) + Python API(`python/openfep/`) + PySide6 UI(`python/openfep/ui/`). 모든 기능은 코어의 명령 계층을 거친다.
+- 구성: C++ 코어(`core/`, OpenCASCADE 형상·Netgen 메싱) + Vulkan 렌더러(`render/`) + Python API(`python/nasa95/`) + PySide6 UI(`python/nasa95/ui/`). 모든 기능은 코어의 명령 계층을 거친다.
 - 외부 준비물(저장소 밖 `..\third_party\`): CalculiX ccx, OpenCASCADE 8.0.1, Netgen 빌드, Vulkan SDK. 없으면 그 부분 없이 빌드된다.
 
 ## 빌드와 테스트 (Windows, Visual Studio 2022)
@@ -15,7 +16,7 @@ python -m venv --system-site-packages .venv
 .\scripts\test.ps1
 ```
 
-UI 실행: `open-fep.bat` 또는 `.\scripts\ui.ps1`.
+UI 실행: `nasa-95.bat` 또는 `.\scripts\ui.ps1`.
 
 ### 리본 UI 의존성
 
@@ -34,7 +35,7 @@ UI는 SARibbon v2.9.5(MIT)의 공식 PySide6 바인딩을 사용한다. Windows 
 
 ```python
 import sys; sys.path.insert(0, "python")
-from openfep import App
+from nasa95 import App
 
 app = App()                                   # 창 없이 실행
 part = app.model.parts.create(name="beam")
@@ -54,5 +55,5 @@ app.undo()                                    # 모든 변경 명령은 되돌�
 print(app.execute("project.tree"))
 ```
 
-솔버 실행은 `app.execute("case.run", id=case.id, wait=True)` (ccx 경로: 환경 변수 `OFEP_CCX` 또는 케이스의 `solver_executable`),
+솔버 실행은 `app.execute("case.run", id=case.id, wait=True)` (ccx 경로: 환경 변수 `NASA95_CCX` 또는 케이스의 `solver_executable`),
 결과는 `app.execute("result.open", case=case.id)` 로 연다. 명령 목록은 `app.commands()`, 전체 정의는 작업 저장소의 `.agent/proj-api-full-list.md`.

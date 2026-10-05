@@ -1,6 +1,6 @@
 """덱을 CalculiX 로 실제로 풀어 확인한다(3단계). 덱의 형식과 뜻(부호·라벨·승계)이 솔버와 맞는지 본다.
 
-ccx 실행 파일: 환경 변수 OFEP_CCX, 없으면 ..\\third_party\\calculix 아래에서 찾는다. 없으면 이 파일의 테스트는 건너뛴다.
+ccx 실행 파일: 환경 변수 NASA95_CCX, 없으면 ..\\third_party\\calculix 아래에서 찾는다. 없으면 이 파일의 테스트는 건너뛴다.
 """
 import math
 import os
@@ -11,13 +11,13 @@ import subprocess
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from meshutil import block, plate
 
 
 def _find_ccx():
-    env = os.environ.get("OFEP_CCX")
+    env = os.environ.get("NASA95_CCX")
     if env and pathlib.Path(env).exists():
         return env
     root = pathlib.Path(__file__).resolve().parents[3] / "third_party" / "calculix"
@@ -29,7 +29,7 @@ def _find_ccx():
 
 
 CCX = _find_ccx()
-pytestmark = pytest.mark.skipif(CCX is None, reason="ccx 실행 파일이 없습니다(OFEP_CCX)")
+pytestmark = pytest.mark.skipif(CCX is None, reason="ccx 실행 파일이 없습니다(NASA95_CCX)")
 
 
 def solve(app, case, tmp_path, name="job"):
@@ -335,7 +335,7 @@ def low_top_nodes(app, surface):
 
 def _surface_nodes(app, surface):
     """면 셋의 노드(요소면 → 노드): 임시 구속의 대상 전개로 얻는다."""
-    from openfep import App  # noqa: F401
+    from nasa95 import App  # noqa: F401
     return [int(n) for n in resolve_target(app, {"type": "set", "ids": [surface.id]})]
 
 
@@ -451,7 +451,7 @@ def test_SOLVER_local_csys_transform(app, tmp_path):
 # ================================================================ 솔버 실행 명령 (CAS-13, CAS-39, CAS-41)
 @pytest.fixture
 def ccx_env(monkeypatch):
-    monkeypatch.setenv("OFEP_CCX", CCX)
+    monkeypatch.setenv("NASA95_CCX", CCX)
 
 
 @pytest.mark.feature("CAS-13")
@@ -480,7 +480,7 @@ def test_SOLVER_run_and_status(app, tmp_path, ccx_env):
     assert all(i["step"] == 1 and i["iterations"] >= 1 for i in inc)
     # 프로젝트를 저장했으면 작업 폴더는 프로젝트 파일 옆에 생긴다
     case.update(work_directory=None)
-    app.execute("project.save_as", path=str(tmp_path / "model.ofep"))
+    app.execute("project.save_as", path=str(tmp_path / "model.nasa95"))
     r = app.execute("case.run", id=case.id, wait=True)
     assert pathlib.Path(r["work_directory"]) == tmp_path / "model.work" / "cantilever" and r["state"] == "completed"
 
@@ -542,21 +542,21 @@ def test_SOLVER_run_failure_and_errors(app, tmp_path, ccx_env, monkeypatch):
     assert [w["code"] for w in r["deck_warnings"]] == ["unassigned_elements"]
     # 덱에 쓰지 못한 객체가 있으면 실행하지 않는다(ASCII 가 아닌 보존 블록은 덱에 쓰지 못한다)
     bad = app.model.deck_blocks.create(parent=case.id, text="*HEADING" + chr(10) + "한글 제목")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.run", id=case.id, wait=True)
     assert e.value.code == "deck_incomplete" and e.value.details["skipped"][0]["object"] == bad.id
     assert app.execute("case.run", id=case.id, wait=True, allow_skipped=True)["skipped"][0]["object"] == bad.id
     # 솔버를 찾지 못함
     case.update(solver_executable=str(tmp_path / "no_such_ccx.exe"))
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.run", id=case.id)
     assert e.value.code == "solver_not_found"
     case.update(solver_executable=None)
-    monkeypatch.delenv("OFEP_CCX")
-    with pytest.raises(OfepError) as e:
+    monkeypatch.delenv("NASA95_CCX")
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.run", id=case.id)
     assert e.value.code == "solver_not_found"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.run", id=mat.id)
     assert e.value.code == "wrong_kind"
 
@@ -583,7 +583,7 @@ def test_SOLVER_run_stop(app, tmp_path, ccx_env):
     s.loads.create_force(target={"type": "set", "ids": [tip.id]}, components=[0.0, 0.0, -1.0])
     r = app.execute("case.run", id=case.id)
     assert r["state"] == "running" and "exit_code" not in r
-    with pytest.raises(OfepError) as e:  # 같은 케이스를 겹쳐 실행할 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 같은 케이스를 겹쳐 실행할 수 없다
         app.execute("case.run", id=case.id)
     assert e.value.code == "invalid_state"
     st = app.execute("case.run_stop", id=case.id)
@@ -654,7 +654,7 @@ def test_RES_T01_open_and_frames(app, solved):
                                ("result.values", dict(result=r["id"], frame=1, field="DISP", component="SXX"), "not_found"),
                                ("result.values", dict(result=r["id"], frame=1, field="DISP", nodes=[999999]), "not_found"),
                                ("result.open", dict(), "missing_param"), ("result.open", dict(path="nothing.frd"), "io_error")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute(name, **params)
         assert e.value.code == code, (name, params)
 
@@ -705,7 +705,7 @@ def test_RES_T02_values(app, solved):
     assert pr["node"] == int(ids[k]) and pr["mises"] == pytest.approx(float(mises[k])) and pr["SXX"] == pytest.approx(float(s[k, 0]))
     d = app.execute("result.derived_scalar", result=rid, frame=2, field="STRESS", name="mises", nodes=[int(ids[k])])
     assert d["available"] == ["mises", "tresca", "p1", "p2", "p3", "pressure"] and d["values"] == pytest.approx([float(mises[k])])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.results.values(rid, 2, "STRESS", "magnitude")
     assert e.value.code == "not_found"
 
@@ -726,7 +726,7 @@ def test_RES_T03_reaction_and_history(app, solved):
     h = app.execute("result.history", result=rid, field="DISP", component="D3", node=node, step=1)
     assert [(p["frame"], p["x"]) for p in h] == [(1, 0.5), (2, 1.0)] and h[1]["y"] == pytest.approx(2 * h[0]["y"], rel=0.02)
     assert len(app.execute("result.history", result=rid, field="DISP", component="magnitude", node=node)) == 8
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.history", result=rid, field="NOPE", component="D3", node=node)
     assert e.value.code == "not_found"
 
@@ -929,7 +929,7 @@ def test_RES_T06_export_path_compare_transform(app, solved, tmp_path):
     rr = (x * x + y * y) ** 0.5
     tc = app.execute("result.transform", result=rid, frame=2, field="DISP", csys=cyl.id, nodes=[node])["values"][0]
     assert tc[0] == pytest.approx((x * d[0] + y * d[1]) / rr, abs=1e-12) and tc[2] == pytest.approx(d[2], abs=1e-12)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.transform", result=rid, frame=2, field="STRESS", csys=solved["root"].id)
     assert e.value.code == "wrong_kind"
 
@@ -937,13 +937,13 @@ def test_RES_T06_export_path_compare_transform(app, solved, tmp_path):
 @pytest.mark.feature("CAS-41")
 def test_SOLVER_settings_default_solver(app, tmp_path, monkeypatch):
     """케이스에 솔버·스레드·작업 폴더 지정이 없으면 프로그램 설정의 값을 쓴다(환경 변수보다 앞)."""
-    monkeypatch.delenv("OFEP_CCX", raising=False)
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "settings.json"))
+    monkeypatch.delenv("NASA95_CCX", raising=False)
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "settings.json"))
     part, mat, root, tip, case = cantilever(app, order=1, n=(4, 1, 1))
     s = case.steps.create_static()
     s.bcs.create_displacement(target={"type": "set", "ids": [root.id]}, dofs=[1, 2, 3])
     s.loads.create_force(target={"type": "set", "ids": [tip.id]}, components=[0.0, 0.0, -1.0])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.run", id=case.id, wait=True)
     assert e.value.code == "solver_not_found"
     app.execute("app.settings_set", key="solver_executable", value=CCX)
@@ -964,7 +964,7 @@ def test_RES_T07_result_file_and_derived(app, solved):
     rf = app.model.results.create(name="R1", case=case.id)
     r = app.execute("result.open", file=rf.id)
     assert r["frames"] == 8
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.open", file=case.id)
     assert e.value.code == "wrong_kind"
     rid = r["id"]
@@ -977,7 +977,7 @@ def test_RES_T07_result_file_and_derived(app, solved):
     assert v["ids"] == mises["ids"] and v["values"] == pytest.approx([250.0 / max(m, 1e-9) for m in mises["values"]], rel=1e-9)
     assert app.execute("result.derived_values", id=ex.id, frame=1, nodes=tip)["frame"] == 1  # 매개변수의 프레임이 우선
     bad = rf.derived.create_expression(name="BAD", expression="DISP.NOPE + 1", frame=2)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.derived_values", id=bad.id)
     assert e.value.code == "not_found"
     # 조합: 2 × 프레임 2 − 프레임 1 (같은 파일)
@@ -1005,7 +1005,7 @@ def test_RES_T07_result_file_and_derived(app, solved):
     assert len(app.execute("derived_result.list")) == n
     assert app.execute("result_file.get", id=rf.id)["props"]["case"] == case.id
     app.execute("result.close", result=rid)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.derived_values", id=ex.id)
     assert e.value.code == "invalid_state"
 
@@ -1031,7 +1031,7 @@ def test_RES_T09_plot_and_report(app, solved, tmp_path):
     case, tip = solved["case"], solved["tip"].props["ids"]
     rf = app.model.results.create(name="R", case=case.id)
     hist = app.model.plots.create_history(name="tip_u3", result_file=rf.id, field="DISP", component="D3", node=tip[0], step=1)
-    with pytest.raises(OfepError) as e:  # 결과를 열기 전에는 값을 낼 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 결과를 열기 전에는 값을 낼 수 없다
         app.execute("plot.data", id=hist.id)
     assert e.value.code == "invalid_state"
     rid = app.execute("result.open", file=rf.id)["id"]
@@ -1049,7 +1049,7 @@ def test_RES_T09_plot_and_report(app, solved, tmp_path):
     assert app.execute("plot.export", id=hist.id, path=str(csv))["rows"] == 2
     lines = csv.read_text().splitlines()
     assert lines[0] == "time,DISP.D3" and [float(l.split(",")[0]) for l in lines[1:]] == [0.5, 1.0]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("plot.data", id=rf.id)
     assert e.value.code == "wrong_kind"
     # 보고서: 뷰는 저장한 이름을 복원해 그리고, 그린 뒤 뷰 상태를 되돌린다
@@ -1075,10 +1075,10 @@ def test_RES_T09_plot_and_report(app, solved, tmp_path):
     assert "<th>min</th>" in html or "<th>max</th>" in html  # table 항목: result.minmax 의 결과
     assert app.execute("view.camera_get") == before  # 뷰 상태 복원
     bad = app.model.reports.create(name="bad", items=[{"kind": "table", "command": "view.camera_get"}])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("report.generate", id=bad.id, path=str(tmp_path / "bad.html"))
     assert e.value.code == "invalid_param"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("report.generate", id=hist.id, path=str(out))
     assert e.value.code == "wrong_kind"
 
@@ -1102,7 +1102,7 @@ def test_RES_T10_custom_derived_result(app, solved):
     assert v["ids"] == tip and v["values"] == pytest.approx([3.0 * x for x in u3]) and (v["type"], v["calculation"], v["frame"]) == ("custom", "twice", 2)
     assert app.execute("result.derived_values", id=d.id, frame=1, nodes=tip)["frame"] == 1
     bad = rf.derived.create_custom(name="B", calculation="nope", frame=2)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.derived_values", id=bad.id)
     assert e.value.code == "not_found"
 
@@ -1154,7 +1154,7 @@ def test_RES_T11_diagnostics(app, tmp_path, ccx_env):
     assert one["ids"] == [9002, 9003] and one["connectivity"][1] == [2, 3, 4, 5, 6, 7, 8, 9]
     assert d["warnings"] == [{"file": "cantilever_WarnNodeMissMasterIntersect.nam", "path": str(tmp_path / "cantilever_WarnNodeMissMasterIntersect.nam"),
                               "kind": "nodes", "name": "WarnNodeMissMasterIntersect", "warning": "WarnNodeMissMasterIntersect", "count": 3, "ids": [3, 4, 5]}]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.diagnostics", result=rid, set="nope")
     assert e.value.code == "not_found"
 
@@ -1187,7 +1187,7 @@ def test_CAS_restart_and_attach(app, tmp_path, ccx_env):
     case, tip, T = model(app)
     deck = app.execute("case.preview_deck", id=case.id)["text"]
     assert "*RESTART, WRITE\n" in deck
-    with pytest.raises(OfepError) as e:  # 스텝 1 뒤에 쓸 스텝이 없다
+    with pytest.raises(Nasa95Error) as e:  # 스텝 1 뒤에 쓸 스텝이 없다
         app.execute("case.restart", id=case.id, step=1)
     assert e.value.code == "invalid_param"
     run1 = solve_ok(app, "case.run", id=case.id)
@@ -1197,10 +1197,10 @@ def test_CAS_restart_and_attach(app, tmp_path, ccx_env):
     s2 = case.steps.create_static(name="s2")
     s2.loads.create_force(target=T, components=[0.0, 0.0, -200.0 / len(tip.props["ids"])])
     s2.outputs.create_node_file(variables=["U"])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.restart", id=case.id, step=2)  # 뒤에 쓸 스텝이 없다
     assert e.value.code == "invalid_param"
-    with pytest.raises(OfepError) as e:  # 재시작 파일이 없다
+    with pytest.raises(Nasa95Error) as e:  # 재시작 파일이 없다
         app.execute("case.restart", id=case.id, step=1, restart_file=str(work / "nope.rout"))
     assert e.value.code == "not_found"
     run2 = solve_ok(app, "case.restart", id=case.id, step=1)
@@ -1234,7 +1234,7 @@ def test_CAS_restart_and_attach(app, tmp_path, ccx_env):
     r2 = app.execute("case.attach_results", id=case.id, path=str(work / "cantilever.frd"), name="first", description="처음 실행")
     assert app.execute("result_file.get", id=r2["id"])["props"]["description"] == "처음 실행"
     assert app.execute("result.open", file=r2["id"])["frames"] == 1
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.attach_results", id=case.id, path=str(work / "nope.frd"))
     assert e.value.code == "not_found"
     app.undo()
@@ -1265,10 +1265,10 @@ def test_LOD_map_field(app, tmp_path):
     assert r["faces"] == [[1, 2], [2, 2], [3, 2], [4, 2]] and r["values"] == [20.0, 20.0, 120.0, 120.0]  # 면 중심 x = 12.5, 37.5, 62.5, 87.5
     r = app.execute("load.map_field", points=pts, target=top, what="faces", method="idw", power=1.0)
     assert r["values"][0] < 70 < r["values"][3] and r["values"][0] + r["values"][3] == pytest.approx(140.0)  # 대칭
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("load.map_field", points=[[0, 0, 0]], target={"type": "nodes", "ids": [1]})
     assert e.value.code == "invalid_param_type"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("load.map_field", target={"type": "nodes", "ids": [1]})
     assert e.value.code == "missing_param"
     # 온도 하중 객체: 덱에 노드마다 쓰이고 솔버가 그 온도를 쓴다(열팽창 → 변위, NT 출력)
@@ -1325,7 +1325,7 @@ def test_RES_T12_complex_results(app, tmp_path, ccx_env):
     # 솔버가 쓴 크기·위상(PDISP)과 맞는지: |u| = sqrt(re² + im²)
     pd = app.execute("result.values", result=rid, frame=2, field="PDISP", component=app.execute("result.fields", result=rid, frame=2)[-1]["components"][2], nodes=[node])["values"][0]
     assert pd == pytest.approx(math.hypot(re, im), rel=1e-4)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.at_phase", result=rid, frame=2, field="PDISP", component="D3", phase=0.0)
     assert e.value.code == "not_found"
     assert app.execute("result.complex_summary", result=rid) == []  # 복소 고유치 표가 없다
@@ -1404,9 +1404,63 @@ def test_RES_T13_beam_section_forces_and_integration_points(app, tmp_path, ccx_e
     run = app.execute("case.run", id=case.id, wait=True)
     assert run["state"] == "completed", run["errors"]
     rid3 = app.execute("result.open", case=case.id)["id"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.beam_section_forces", result=rid3, frame=1)
     assert e.value.code == "invalid_state"
+
+
+@pytest.mark.feature("PRP-05")
+@pytest.mark.feature("PRP-06")
+@pytest.mark.feature("RES-53")
+@pytest.mark.parametrize("section", ["I", "T"])
+def test_PRP_T01_30_composite_section_cantilever(app, tmp_path, ccx_env, section):
+    """형강 합성보(D15)를 솔버로 확인: I·T 단면 외팔보(B31)의 끝 처짐이 보 이론(도심 기준 I)과 1% 안에서 맞고,
+    펼친 결과의 플랜지가 1축(+z) 쪽에 생기며(OFFSET 부호), 펼친 노드가 모델 노드에 대응돼 결과를 입힐 수 있다."""
+    mat = steel(app)
+    L, P, nel = 1000.0, 1000.0, 5
+    n = app.execute("mesh.nodes_create", coords=[[L * i / nel, 0.0, 0.0] for i in range(nel + 1)])["ids"]
+    beams = app.execute("mesh.elements_create", shape="line2", type="B31", connectivity=[[n[i], n[i + 1]] for i in range(nel)])["ids"]
+    h, b, tw, tf = 100.0, 60.0, 6.0, 8.0
+    app.model.properties.create_beam(material=mat.id, section=section, dimensions=[h, b, tw, tf], direction=[0.0, 0.0, 1.0],
+                                     target={"type": "elements", "ids": beams})
+    case = app.model.cases.create(name="steel")
+    case.update(work_directory=str(tmp_path), threads=1)
+    s = case.steps.create_static()
+    s.bcs.create_displacement(target={"type": "nodes", "ids": [n[0]]}, dofs=[1, 2, 3, 4, 5, 6])
+    s.loads.create_force(target={"type": "nodes", "ids": [n[-1]]}, components=[0.0, 0.0, -P])
+    s.outputs.create_node_file(variables=["U"])
+    s.outputs.create_element_file(variables=["S"])
+    run = app.execute("case.run", id=case.id, wait=True)
+    assert run["state"] == "completed", run["errors"]
+    rid = app.execute("result.open", case=case.id)["id"]
+    E = 210000.0
+    if section == "I":
+        I = b * h**3 / 12 - (b - tw) * (h - 2 * tf) ** 3 / 12
+    else:  # T: 플랜지(+1축 쪽) + 웨브, 도심 기준
+        A1, z1, A2, z2 = b * tf, (h - tf) / 2, (h - tf) * tw, -tf / 2
+        zc = (A1 * z1 + A2 * z2) / (A1 + A2)
+        I = b * tf**3 / 12 + A1 * (z1 - zc) ** 2 + tw * (h - tf) ** 3 / 12 + A2 * (z2 - zc) ** 2
+    tip = app.execute("result.values", result=rid, frame=1, field="DISP", component="D3", nodes=[n[-1]], shell_face="mid")["values"][0]
+    assert tip == pytest.approx(-P * L**3 / (3 * E * I), rel=0.01), (tip, -P * L**3 / (3 * E * I))
+    # 펼친 노드의 위치: 끝단에서 z > h/2 - tf 인 노드는 플랜지(폭 b 전체) → OFFSET 부호가 맞다(플랜지가 +1축 쪽)
+    info = app.execute("result.info", result=rid)
+    frd = pathlib.Path(info["path"])
+    xyz, block = [], False
+    for line in frd.read_text().splitlines():
+        if line.startswith("    2C"):
+            block = True
+        elif block and line.startswith(" -1"):
+            xyz.append((float(line[13:25]), float(line[25:37]), float(line[37:49])))
+        elif block and line.startswith(" -3"):
+            break
+    top = [y for x, y, z in xyz if abs(x - L) < 1e-6 and z > h / 2 - tf + 1e-6]
+    assert top and max(top) == pytest.approx(b / 2) and min(top) == pytest.approx(-b / 2)
+    if section == "T":
+        bottom = [y for x, y, z in xyz if abs(x - L) < 1e-6 and z < -h / 2 + tf]
+        assert bottom and max(bottom) == pytest.approx(tw / 2)  # 아래쪽은 웨브뿐
+    # 응력도 모델 노드에 입힌다(RES-53): 뿌리 노드의 굽힘 응력 크기가 M·c/I 에 가깝다(평균이므로 자릿수만)
+    sxx = app.execute("result.values", result=rid, frame=1, field="STRESS", component="SXX", nodes=[n[1]], shell_face="mid")["values"]
+    assert len(sxx) == 1
 
 
 @pytest.mark.feature("CMN-11")
@@ -1461,7 +1515,7 @@ def test_CMN_unit_convert_model(app, tmp_path):
     # 차원을 모르는 구성 모델이 있으면 거부, force 로 진행
     rubber = app.model.materials.create(name="RUBBER")
     rubber.set_hyperelastic(model="neo_hooke", data=[[80.0, 0.0]])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("unit.convert_model", to="mm-t-s")
     assert e.value.code == "not_available" and e.value.details["unconverted"][0]["behavior"] == "hyperelastic"
     r = app.execute("unit.convert_model", to="mm-t-s", force=True)

@@ -7,13 +7,13 @@
 #include <memory>
 #include <set>
 
-#include "ofep/app.hpp"
-#include "ofep/mesh.hpp"
-#include "ofep/geometry.hpp"
-#include "ofep/mesher.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/mesh.hpp"
+#include "nasa95/geometry.hpp"
+#include "nasa95/mesher.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -223,7 +223,7 @@ Json tree_node(const App& a, const Object& o, const TreeOptions& opt) {
   return j;
 }
 
-// --- 프로그램 설정(CAS-41): 모델이 아니라 사용자 환경에 속한다. 환경 변수 OFEP_SETTINGS 가 가리키는 파일,
+// --- 프로그램 설정(CAS-41): 모델이 아니라 사용자 환경에 속한다. 환경 변수 NASA95_SETTINGS 가 가리키는 파일,
 // 없으면 %APPDATA%\open-fep\settings.json(Windows) 또는 ~/.config/open-fep/settings.json 에 둔다.
 namespace fs = std::filesystem;
 fs::path fs_path(const std::string& utf8) { return fs::path(std::u8string(utf8.begin(), utf8.end())); }
@@ -243,12 +243,12 @@ std::string env(const char* name) {
   return v ? v : "";
 }
 fs::path settings_file() {
-  const std::string given = env("OFEP_SETTINGS");
+  const std::string given = env("NASA95_SETTINGS");
   if (!given.empty()) return fs_path(given);
   std::string base = env("APPDATA");
   if (base.empty()) base = env("XDG_CONFIG_HOME");
   if (base.empty()) base = env("HOME") + "/.config";
-  return fs_path(base) / "open-fep" / "settings.json";
+  return fs_path(base) / "NASA-95" / "settings.json";
 }
 struct Settings {
   Json data = Json::object();
@@ -660,4 +660,4 @@ void register_system_commands(App& app) {
                             [](App& a, const Json& p) { return a.journal_replay(p["path"].get<std::string>()); }));
 }
 
-}  // namespace ofep
+}  // namespace nasa95

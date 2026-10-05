@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from openfep import App
+from nasa95 import App
 
 PI = math.pi
 _version = App().execute("app.version")

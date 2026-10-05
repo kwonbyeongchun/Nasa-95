@@ -3,7 +3,7 @@
 // 열전달 유사 해석(음향·전기장 등)·네트워크·개수로는 케이스의 해석 분야로 지정하고 스텝은 heat_transfer 를 쓴다.
 #include "kinds.hpp"
 
-namespace ofep::kinds {
+namespace nasa95::kinds {
 
 namespace {
 
@@ -65,6 +65,8 @@ void register_case(Schema& s) {
                      "diffusion", "lubrication", "shallow_water", "irrotational_flow", "gas_network",
                      "liquid_network", "channel_network", "fluid", "electromagnetic"}),
         F("description", "string", "설명").ex("외팔보 정적 해석"),
+        // 이 케이스를 풀 솔버(D16). opensees 면 덱이 OpenSees 의 Tcl 스크립트로 나가고 OpenSees 실행 파일로 돌린다
+        F("solver", "string", "솔버(없으면 calculix. 지원 범위는 solver.list)").one_of({"calculix", "opensees", "mystran"}),
         target("scope", "해석에 포함할 요소(없으면 전체)", kElements),
         F("contact_method", "string", "접촉 방식(케이스의 모든 접촉 쌍에 적용)")
             .one_of({"node_to_surface", "surface_to_surface", "mortar", "massless"}),
@@ -298,4 +300,4 @@ void register_case(Schema& s) {
   }
 }
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds

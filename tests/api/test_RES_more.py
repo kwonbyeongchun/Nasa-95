@@ -7,17 +7,17 @@ import pathlib
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 import test_SOLVER_ccx as S
 from meshutil import block, plate
 
-pytestmark = pytest.mark.skipif(S.CCX is None, reason="ccx 실행 파일이 없습니다(OFEP_CCX)")
+pytestmark = pytest.mark.skipif(S.CCX is None, reason="ccx 실행 파일이 없습니다(NASA95_CCX)")
 
 
 @pytest.fixture
 def ccx_env(monkeypatch):
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
 
 
 def _run(app, case, tmp_path):
@@ -216,7 +216,7 @@ def test_RES_T03_05_13_T06_04_10_animation_and_phase(app, tmp_path, ccx_env):
         pytest.skip("렌더러 없이 빌드됨")
     try:
         app.execute("view.diagnostics")
-    except OfepError:
+    except Nasa95Error:
         pytest.skip("Vulkan 을 쓸 수 없음")
     app.execute("view.hud", triad=False, legend=False)
     app.execute("view.result_show", result=rid, field="DISP", component="magnitude", deform_scale=10.0)
@@ -292,7 +292,7 @@ def test_RES_T07_01_02_10_T03_03_11_expanded_shell(app, tmp_path, ccx_env):
             app.execute("view.diagnostics")
             r = app.execute("view.result_show", result=rid, frame=1, field="STRESS", component="SXX", shell_face="top")
             assert r["settings"]["shell_face"] == "top"
-            with pytest.raises(OfepError):
+            with pytest.raises(Nasa95Error):
                 app.execute("view.result_show", result=rid, frame=1, field="STRESS", component="SXX", shell_face="inside")
             # shell_face 없이도 펼쳐진 결과는 중립면 값으로 자동 대응해 색이 입혀진다(결과 노드가 모델 노드와 겹치지 않으므로)
             app.execute("view.result_show")
@@ -300,10 +300,10 @@ def test_RES_T07_01_02_10_T03_03_11_expanded_shell(app, tmp_path, ccx_env):
             app.execute("view.result_show", result=rid, frame=1, field="STRESS", component="SXX")
             assert not np.array_equal(app.view.render(160, 120)[0], plain)
             app.execute("view.result_show")
-        except OfepError as e:
+        except Nasa95Error as e:
             if e.code != "not_available":
                 raise
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.values", result=rid, frame=1, field="STRESS", shell_face="top")  # component 없음
     assert e.value.code == "missing_param"
     # 솔리드 결과에 면 선택(RES-T03-11): 오류
@@ -314,7 +314,7 @@ def test_RES_T07_01_02_10_T03_03_11_expanded_shell(app, tmp_path, ccx_env):
     s.loads.create_force(target={"type": "set", "ids": [tip.id]}, components=[0.0, 0.0, -1.0])
     s.outputs.create_element_file(variables=["S"])
     rid = _run(app, case, tmp_path / "solid")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.values", result=rid, frame=1, field="STRESS", component="SXX", shell_face="top")
     assert e.value.code == "not_available"
 
@@ -350,7 +350,7 @@ def test_RES_T07_08_14_removed_elements(app, tmp_path, ccx_env):
     if "view.result_show" in {c["name"] for c in app.commands()}:
         try:
             app.execute("view.diagnostics")
-        except OfepError:
+        except Nasa95Error:
             return
         app.execute("view.hud", triad=False, legend=False)
         app.execute("view.display_mode", mode="shaded")

@@ -12,12 +12,12 @@
 #include <sstream>
 #include <tuple>
 
-#include "ofep/error.hpp"
-#include "ofep/expr.hpp"
-#include "ofep/mesh.hpp"
-#include "ofep/results.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/expr.hpp"
+#include "nasa95/mesh.hpp"
+#include "nasa95/results.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -78,7 +78,25 @@ ShellExpansion shell_expansion(const App& a, const ResultFile& f) {
   std::map<Id, Vec3> normal;
   std::set<Id> line_nodes;
   std::map<Id, std::vector<Vec3>> axes;  // 보 절점 → 이어진 요소의 축 방향들
-  std::map<Id, double> reach;            // 보 절점 → 이어진 요소 반 길이의 최소(단면 절점이 있을 수 있는 거리)
+  std::map<Id, double> reach;            // 보 절점 → 단면 절점이 있을 수 있는 거리(요소 반 길이와 단면 반 대각선 가운데 큰 쪽)
+  // 요소별 단면 반 대각선(프로퍼티에서): 단면이 요소 길이보다 큰 보(짧은 요소·형강)도 단면 절점을 받는다
+  std::map<Id, double> half_diag;
+  for (const Object* pr : a.model().by_kind("property")) {
+    if (pr->suppressed || !pr->props.contains("target")) continue;
+    const std::string t = pr->props.value("type", std::string());
+    double d = 0;
+    if (t == "beam" && pr->props.contains("dimensions")) {
+      const auto [H, B] = beam_section_extent(pr->props.value("section", std::string("rect")), pr->props["dimensions"].get<std::vector<double>>());
+      d = 0.5 * std::sqrt(H * H + B * B);
+    } else if (t == "truss") {
+      d = std::sqrt(std::max(pr->props.value("area", 0.0), 0.0));
+    }
+    if (d <= 0) continue;
+    try {
+      for (const Json& e : resolve_target(a, pr->props["target"], "elements")) half_diag[e.get<Id>()] = std::max(half_diag[e.get<Id>()], d);
+    } catch (const Error&) {
+    }
+  }
   for (std::size_t i = 0; i < m.element_count(); ++i) {
     const ShapeInfo& info = shape_info(m.shape_at(i));
     const Id* n = m.nodes_at(i);
@@ -105,7 +123,8 @@ ShellExpansion shell_expansion(const App& a, const ResultFile& f) {
       for (std::size_t k = 0; k < m.node_count_at(i); ++k) {
         line_nodes.insert(n[k]);
         axes[n[k]].push_back(d);
-        reach[n[k]] = reach.count(n[k]) ? std::min(reach[n[k]], 0.5 * len) : 0.5 * len;
+        const double r = std::max(0.5 * len, half_diag.count(m.element_ids()[i]) ? half_diag[m.element_ids()[i]] * 1.01 : 0.0);
+        reach[n[k]] = reach.count(n[k]) ? std::min(reach[n[k]], r) : r;
       }
     }
   }
@@ -2029,4 +2048,4 @@ void register_result_commands(App& app) {
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

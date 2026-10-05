@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from openfep import OfepError
+from nasa95 import Nasa95Error
 from conftest import history_len
 from test_VIEW_render import box, needs_geometry
 
@@ -93,7 +93,7 @@ def test_RND_T01_40_cancel_retarget_and_external_change(app):
     app.execute("view.transition_begin", name="front")
     before = app.execute("view.camera_get")
     for t in [-0.1, 1.1]:
-        with pytest.raises(OfepError):
+        with pytest.raises(Nasa95Error):
             app.execute("view.transition_step", progress=t)
         assert app.execute("view.camera_get") == before
     assert not app.execute("view.transition_step", progress=1.)["active"]

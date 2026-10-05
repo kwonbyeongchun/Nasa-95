@@ -1,7 +1,7 @@
 """전수 검사: 명령 등록부(ALL-01), 모든 API 호출(ALL-02), 잘못된 입력(ALL-03), 뷰·조회의 모델 불변(ALL-06)."""
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import Builder, documented_commands, history_len, total
 
@@ -18,7 +18,7 @@ def c_commands(app: App) -> list[dict]:
 def test_ALL_01_01_names_match_document(app):
     doc = documented_commands()
     if doc is None:
-        pytest.skip("전체 API 목록 문서를 찾을 수 없음(OFEP_WORKS)")
+        pytest.skip("전체 API 목록 문서를 찾을 수 없음(NASA95_WORKS)")
     registered = {c["name"] for c in app.commands()}
     undocumented = sorted(registered - set(doc))
     assert not undocumented, f"문서에 없는 명령: {undocumented}"
@@ -80,7 +80,7 @@ def test_ALL_02_02_execute_by_name(app):
 
 @pytest.mark.feature("API-02")
 def test_ALL_02_03_unknown_command(app):
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("no.such_command")
     assert e.value.code == "unknown_command"
 
@@ -93,7 +93,7 @@ def expect_rejected(app: App, name: str, params: dict, codes: set[str], check_st
     """
     if check_state:
         before, hist = total(app), history_len(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute(name, params)
     assert e.value.code in codes, f"{name}: 오류 코드 {e.value.code} (기대 {codes})"
     assert e.value.message
@@ -144,13 +144,13 @@ def test_ALL_03_03_out_of_range(app, build):
     part = app.model.parts.create(name="P")
     sk = app.execute("sketch.create", parent=part.id, point=[0, 0, 0], normal=[0, 0, 1], x_axis=[1, 0, 0])["id"]
     app.execute("sketch.add_rectangle", id=sk, corner=[0, 0], size=[10, 5])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("sketch.add_dimension", id=sk, kind="horizontal_distance", value=10.0, points=[{"entity": 1, "point": 1}, {"entity": 1, "point": 2}])
     assert e.value.code == "invalid_param_type" and e.value.details["param"] == "points" and e.value.details["item"] == "points[0].point"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.generate", id=part.id, method="voxel")
     assert e.value.code == "out_of_range" and e.value.details["param"] == "method"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.result_show", result=1, frame=0)
     assert e.value.code == "out_of_range" and e.value.details["param"] == "frame"
 
@@ -210,6 +210,6 @@ def test_ALL_06_02_queries_do_not_change_model(app, build):
         before, hist = total(app), history_len(app)
         try:
             app.execute(c["name"], params)
-        except OfepError:
+        except Nasa95Error:
             pass  # 조건이 맞지 않아 거부된 조회도 모델을 바꾸면 안 된다
         assert total(app) == before and history_len(app) == hist, c["name"]

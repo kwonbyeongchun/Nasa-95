@@ -10,7 +10,7 @@ if(MSVC)
   add_compile_options(/utf-8 /W4 /permissive- /MP)
 endif()
 
-option(OFEP_BUILD_PYTHON "Python 모듈(_ofep)을 빌드한다" ON)
+option(NASA95_BUILD_PYTHON "Python 모듈(_nasa95)을 빌드한다" ON)
 
 include(FetchContent)
 # nlohmann/json (MIT) — 명령 매개변수·모델 직렬화
@@ -22,15 +22,15 @@ FetchContent_MakeAvailable(nlohmann_json)
 add_subdirectory(core)
 
 # Vulkan SDK (헤더·로더 라이브러리·셰이더 컴파일러). 없으면 렌더러 없이 빌드한다.
-set(OFEP_VULKAN_SDK "${CMAKE_SOURCE_DIR}/../third_party/vulkan/sdk" CACHE PATH "Vulkan SDK 폴더")
-if(EXISTS "${OFEP_VULKAN_SDK}/Include/vulkan/vulkan.h")
-  message(STATUS "Vulkan SDK: ${OFEP_VULKAN_SDK}")
+set(NASA95_VULKAN_SDK "${CMAKE_SOURCE_DIR}/../third_party/vulkan/sdk" CACHE PATH "Vulkan SDK 폴더")
+if(EXISTS "${NASA95_VULKAN_SDK}/Include/vulkan/vulkan.h")
+  message(STATUS "Vulkan SDK: ${NASA95_VULKAN_SDK}")
   add_subdirectory(render)
 else()
-  message(STATUS "Vulkan SDK 없음: 렌더러 없이 빌드한다 (${OFEP_VULKAN_SDK})")
+  message(STATUS "Vulkan SDK 없음: 렌더러 없이 빌드한다 (${NASA95_VULKAN_SDK})")
 endif()
 
-if(OFEP_BUILD_PYTHON)
+if(NASA95_BUILD_PYTHON)
   set(PYBIND11_FINDPYTHON ON)
   find_package(pybind11 CONFIG REQUIRED)
   add_subdirectory(bindings/python)

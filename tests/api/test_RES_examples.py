@@ -11,7 +11,7 @@ import shutil
 
 import pytest
 
-from openfep import App
+from nasa95 import App
 
 ROOT = pathlib.Path(__file__).resolve().parents[2].parent / "third_party" / "calculix"
 EXAMPLES = ROOT / "test" / "CalculiX" / "ccx_2.22" / "test"
@@ -27,7 +27,7 @@ def _need(*names):
 
 
 def _run(app: App, name: str, tmp_path, monkeypatch, extra_files=(), before_run=None):
-    monkeypatch.setenv("OFEP_CCX", str(CCX))
+    monkeypatch.setenv("NASA95_CCX", str(CCX))
     work = tmp_path / name
     work.mkdir()
     for f in extra_files:

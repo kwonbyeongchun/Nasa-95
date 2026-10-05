@@ -5,9 +5,9 @@
 // 행의 상수 개수는 구성 모델과 그 종류에 따라 정해진다(아래 row_size).
 // 열 순서는 CalculiX 입력 파일의 데이터 줄 순서와 같다(CalculiX 2.22 매뉴얼 7장).
 #include "kinds.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep::kinds {
+namespace nasa95::kinds {
 
 namespace {
 
@@ -50,9 +50,9 @@ void register_material(Schema& s) {
   s.add(std::move(k));
 }
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds
 
-namespace ofep {
+namespace nasa95 {
 
 using kinds::F;
 
@@ -282,4 +282,4 @@ const std::vector<BehaviorSpec>& material_behaviors() {
   return v;
 }
 
-}  // namespace ofep
+}  // namespace nasa95

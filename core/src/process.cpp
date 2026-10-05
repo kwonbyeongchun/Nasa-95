@@ -1,6 +1,6 @@
-#include "ofep/process.hpp"
+#include "nasa95/process.hpp"
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -18,7 +18,7 @@
 #include <cstdlib>
 #endif
 
-namespace ofep {
+namespace nasa95 {
 
 #ifdef _WIN32
 
@@ -208,4 +208,4 @@ int Process::exit_code() { return running() ? 0 : impl_->code; }
 
 #endif
 
-}  // namespace ofep
+}  // namespace nasa95

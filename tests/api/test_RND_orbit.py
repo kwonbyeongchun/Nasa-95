@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from openfep import OfepError
+from nasa95 import Nasa95Error
 from conftest import history_len
 from test_VIEW_render import box, needs_geometry
 
@@ -139,7 +139,7 @@ def test_RND_T01_29_saved_pivot_and_fit_reset(app):
 ])
 def test_RND_T01_30_invalid_input_preserves_camera(app, command, params):
     camera = top_camera(app)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute(command, **params)
     assert app.execute("view.camera_get") == camera
 
@@ -197,6 +197,6 @@ def test_RND_T01_45_zoom_region(app, projection):
     assert app.digest() == before and history_len(app) == history
     # 1픽셀 이하 사각형(클릭만)은 오류 없이 처리되고, 범위 밖 크기는 구조화 오류
     app.execute("view.zoom_region", x0=10, y0=10, x1=10, y1=10, width=w, height=h)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.zoom_region", x0=0, y0=0, x1=5, y1=5, width=0, height=h)
     assert e.value.code == "out_of_range"

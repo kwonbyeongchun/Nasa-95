@@ -5,7 +5,7 @@ TC: .agent/tests/tc-04-load-bc.md BC-T06-10·11·12·18·19·20, LOD-T06-10·18 
 """
 import pytest
 
-from openfep import OfepError
+from nasa95 import Nasa95Error
 
 from meshutil import block, plate
 from test_CASE_deck import _nodes_of, cantilever, deck, find, steel
@@ -91,7 +91,7 @@ def test_BC_T06_12_20_LOD_T06_10_18_thermal_analogy_labels(app):
         assert find(cards, "CONDUCTIVITY")[0][2] == ["0.001"]
     app.execute("case.set_physics", id=case.id, physics="thermal")
     assert app.execute("case.physics_labels", id=case.id)["temperature"] == "온도"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.set_physics", id=case.id, physics="magic")
     assert e.value.code == "out_of_range" and e.value.details.get("param") == "physics"
 
@@ -156,7 +156,7 @@ def test_MSH_T08_13_to_21_element_type_names_in_deck(app):
     ln = app.execute("mesh.elements_create", shape="line2", connectivity=[[n + i, n + i + 1] for i in range(4)])["first"]
     for i, t in enumerate(["B31", "B31R", "T3D2", "U1"]):
         app.execute("mesh.set_element_type", ids=[ln + i], type=t)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.set_element_type", ids=[ln], type="C3D8")  # 형상에 맞지 않는 타입
     assert e.value.code == "out_of_range" and "C3D8" in e.value.message
     P = app.model.properties

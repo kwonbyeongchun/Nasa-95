@@ -5,11 +5,11 @@
 #include <set>
 #include <sstream>
 
-#include "ofep/app.hpp"
-#include "ofep/deck.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/deck.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -284,4 +284,4 @@ void register_solver_commands(App& app) {
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

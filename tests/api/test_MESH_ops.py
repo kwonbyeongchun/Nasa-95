@@ -8,7 +8,7 @@ import math
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 from meshutil import block, plate
@@ -102,7 +102,7 @@ def test_MSH_T04_transform_copy_and_errors(app):
         (dict(scale_factor=0.0), "out_of_range"),
         (dict(translate=[1, 0, 0], ids=[99]), "not_found"),
     ]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.transform", **params)
         assert e.value.code == code, params
     assert total(app) == before and history_len(app) == hist
@@ -139,7 +139,7 @@ def test_MSH_T04_extrude(app):
     app.execute("mesh.extrude", direction=[0, 2.0, 0], layers=2, delete_source=True)
     s = app.execute("mesh.statistics")
     assert s["by_shape"] == {"quad4": 4} and s["area"] == pytest.approx(4.0)
-    with pytest.raises(OfepError) as e:  # 솔리드는 돌출할 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 솔리드는 돌출할 수 없다
         block(app, 1, 1, 1, origin=(50.0, 0.0, 0.0))
         app.execute("mesh.extrude", direction=[0, 0, 1.0])
     assert e.value.code == "unsupported"
@@ -172,14 +172,14 @@ def test_MSH_T04_revolve(app):
         (dict(angle=360.0, layers=2), "out_of_range"),
         (dict(angle=90.0, axis_direction=[0, 0, 0]), "out_of_range"),
     ]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.revolve", **{"axis_point": [0, 0, 0], "axis_direction": [0, 0, 1], **params})
         assert e.value.code == code, params
     assert total(app) == before
     # 회전축 위에 노드가 있으면 거부
     app.execute("project.new")
     plate(app, 1, 1, size=(1.0, 1.0))
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.revolve", axis_point=[0, 0, 0], axis_direction=[0, 1, 0], angle=90.0)
     assert e.value.code == "unsupported"
 
@@ -226,7 +226,7 @@ def test_MSH_T04_convert_order_shapes(app):
     app.execute("mesh.convert_order", order=1)
     assert [e["shape"] for e in app.execute("mesh.elements")] == ["tet4", "tri3", "line2", "pyramid5"]
     assert info(app)[0] == 5
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.convert_order", order=3)
     assert e.value.code == "out_of_range"
 
@@ -255,7 +255,7 @@ def test_MSH_T04_split_combine(app):
     assert sorted(app.execute("mesh.elements", ids=[q])[0]["nodes"]) == [1, 2, 4, 5]
     assert app.execute("mesh.check")["inconsistent_normals"] == []
     for ids, code in [([q], "invalid_param_type"), ([q, 2], "unsupported")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.elements_combine", ids=ids)
         assert e.value.code == code
 
@@ -289,7 +289,7 @@ def test_MSH_T04_refine(app):
     assert app.execute("mesh.free_faces")["count"] == 16
     healthy(app)
     app.execute("mesh.convert_order", order=2)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.refine")
     assert e.value.code == "unsupported"
 
@@ -313,7 +313,7 @@ def test_MSH_T08_connectors(app):
                          (dict(kind="mass", nodes=ids[:2]), "invalid_param_type"),
                          (dict(kind="rope", nodes=ids[:2]), "out_of_range"),
                          (dict(kind="spring", nodes=[1, 99]), "not_found")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.create_connector", **params)
         assert e.value.code == code, params
     assert total(app) == before
@@ -330,7 +330,7 @@ def test_MSH_T08_normals_and_beam_direction(app):
     assert app.execute("mesh.set_normal", entries=[[1, 1, 0.0, 0.0, 1.0], [1, 2, 0.0, 1.0, 1.0]])["count"] == 2
     assert app.execute("mesh.set_normal", entries=[[1, 1, 1.0, 0.0, 0.0]])["count"] == 2  # 같은 (요소, 절점)은 바뀐다
     for entries, code in [([[1, 9, 0, 0, 1]], "not_found"), ([[1, 1, 0, 0, 0]], "out_of_range"), ([[7, 1, 0, 0, 1]], "not_found")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.set_normal", entries=entries)
         assert e.value.code == code
     assert app.execute("mesh.set_normal", entries=[])["count"] == 0
@@ -340,7 +340,7 @@ def test_MSH_T08_normals_and_beam_direction(app):
     assert total(app) != before
     for params, code in [(dict(ids=[beam], direction=[1, 0, 0]), "invalid_geometry"),  # 축과 평행
                          (dict(ids=[1], direction=[0, 0, 1]), "unsupported")]:  # 보가 아님
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.set_beam_direction", **params)
         assert e.value.code == code
     app.undo()
@@ -379,11 +379,11 @@ def test_SYS_renumber(app):
                          (dict(what="nodes", start=0), "out_of_range"),
                          (dict(what="nodes", start=50, ids=[99]), "not_found"),
                          (dict(what="faces", start=1), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("id.renumber", **params)
         assert e.value.code == code, params
     assert total(app) == before
-    with pytest.raises(OfepError) as e:  # 1→2, 2→3: 3 이 이미 있다
+    with pytest.raises(Nasa95Error) as e:  # 1→2, 2→3: 3 이 이미 있다
         app.execute("id.renumber", what="nodes", start=2, ids=[1, 2])
     assert e.value.code == "name_conflict" and total(app) == before
     app.execute("id.renumber", what="nodes", start=12, ids=[11, 12])  # 11→12, 12→13: 옮기는 번호끼리는 겹쳐도 된다
@@ -424,15 +424,15 @@ def test_LOD_BC_resolve(app):
         r = app.execute(f"{obj.kind}.resolve", id=obj.id)
         assert (r["what"], r["count"], r[what]) == (what, len(want), want), obj.props
     bad = step.loads.create_pressure(target={"type": "faces", "ids": [[1, 7]]}, value=1.0)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("load.resolve", id=bad.id)
     assert e.value.code == "out_of_range"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("bc.resolve", id=bad.id)
     assert e.value.code == "wrong_kind"
     geo_part = app.model.parts.create(name="G")
     geo = step.loads.create_force(target={"type": "geometry", "ids": [[geo_part.id, "face", 1]]}, components=[1.0, 0, 0])
-    with pytest.raises(OfepError) as e:  # 메싱하지 않은 형상은 풀 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 메싱하지 않은 형상은 풀 수 없다
         app.execute("load.resolve", id=geo.id)
     assert e.value.code == "not_available"
 
@@ -515,7 +515,7 @@ def test_LOD_resultant(app):
     assert app.execute("load.resultant", id=s2.id)["force"] == pytest.approx([0, 0, 0], abs=1e-9)
     c = s2.loads.create_centrifugal(target={"type": "parts", "ids": [part.id]}, omega=10.0, axis_point=[0, 0, 0], axis_direction=[0, 0, 1])
     assert app.execute("load.resultant", id=s2.id)["unsupported"] == [c.id]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("load.resultant", id=mat.id)
     assert e.value.code == "wrong_kind"
 

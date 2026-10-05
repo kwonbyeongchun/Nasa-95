@@ -9,7 +9,7 @@ _root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 sys.path.insert(0, os.path.join(_root, "python"))
 
 pytest.importorskip("PySide6")
-from openfep import App  # noqa: E402
+from nasa95 import App  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -21,7 +21,7 @@ def qt():
 @pytest.mark.feature("WT-11")
 @pytest.mark.feature("API-01")
 def test_UI_forms_from_schema(qt):
-    from openfep.ui.forms import ObjectDialog
+    from nasa95.ui.forms import ObjectDialog
     app = App()
     mat = app.model.materials.create(name="STEEL")
     d = ObjectDialog(app, "property", "shell")
@@ -72,8 +72,8 @@ def test_UI_forms_from_schema(qt):
 @pytest.mark.feature("MAT-01")
 def test_UI_solver_name_input(qt):
     """솔버 이름 규칙을 쓰는 종류의 이름 칸: 공백은 _ 로 바뀌고, 그 밖의 안 되는 문자는 입력하는 동안 알린다."""
-    from openfep.ui.forms import ObjectDialog
-    from openfep.ui.material_dialog import MaterialDialog
+    from nasa95.ui.forms import ObjectDialog
+    from nasa95.ui.material_dialog import MaterialDialog
     app = App()
     m = MaterialDialog(app)
     m.name.setText("Gray cast iron GG25")  # DB 에서 고른 이름이 이렇게 들어온다
@@ -94,7 +94,7 @@ def test_UI_solver_name_input(qt):
 @pytest.mark.feature("WT-23")
 def test_UI_forms_use_selection(qt):
     """화면에서 고른 면·요소면이 대상 입력으로 들어간다."""
-    from openfep.ui.forms import ObjectDialog
+    from nasa95.ui.forms import ObjectDialog
     app = App()
     step = app.model.cases.create().steps.create_static()
     picked = [{"hit": True, "kind": "face", "part": 7, "index": 3}, {"hit": True, "kind": "face", "part": 7, "index": 5}]
@@ -115,7 +115,7 @@ def test_UI_forms_use_selection(qt):
 
 @pytest.mark.feature("MAT-02")
 def test_UI_material_behaviors_and_command_dialog(qt):
-    from openfep.ui.forms import BehaviorBox, CommandDialog
+    from nasa95.ui.forms import BehaviorBox, CommandDialog
     app = App()
     mat = app.model.materials.create(name="STEEL")
     box = BehaviorBox(app, mat.id)
@@ -142,15 +142,18 @@ def test_UI_material_behaviors_and_command_dialog(qt):
 
 @pytest.mark.feature("CAS-41")
 def test_UI_settings_dialog(qt, tmp_path, monkeypatch):
-    from openfep.ui.forms import SettingsDialog
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    from nasa95.ui.forms import SettingsDialog
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     d = SettingsDialog(app)
-    assert set(d.editors) == {"solver_executable", "threads", "work_directory"} and d.values() == {"solver_executable": None, "threads": None, "work_directory": None}
+    keys = {"solver_executable", "opensees_executable", "mystran_executable", "threads", "work_directory"}  # 솔버 셋의 실행 파일(D16·D17)
+    assert set(d.editors) == keys and d.values() == {k: None for k in keys}
     d.editors["solver_executable"].setText("C:/ccx/ccx.exe")
+    d.editors["mystran_executable"].setText("C:/mystran/mystran.exe")
     d.editors["threads"].setText("2")
     d._apply()
-    assert app.execute("app.settings_get")["values"] == {"solver_executable": "C:/ccx/ccx.exe", "threads": 2}
+    assert app.execute("app.settings_get")["values"] == {"solver_executable": "C:/ccx/ccx.exe", "mystran_executable": "C:/mystran/mystran.exe", "threads": 2}
+    assert [s for s in app.execute("solver.list") if s["name"] == "mystran"][0]["setting_key"] == "mystran_executable"
     e = SettingsDialog(app)
     assert e.editors["threads"].text() == "2"
     e.editors["threads"].setText("x")

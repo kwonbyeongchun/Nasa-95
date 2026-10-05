@@ -2,10 +2,10 @@
 #include <atomic>
 #include <mutex>
 
-#include "ofep/error.hpp"
-#include "ofep/mesher.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/mesher.hpp"
 
-#ifdef OFEP_WITH_NETGEN
+#ifdef NASA95_WITH_NETGEN
 #ifdef _MSC_VER
 #pragma warning(push, 0)
 #endif
@@ -25,7 +25,7 @@
 
 #include "geometry_occt.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 bool mesher_available() { return true; }
 std::string mesher_name() { return "netgen"; }
@@ -162,11 +162,11 @@ MesherOutput run_mesher(const MesherGeometry& geometry, const MesherRequest& rq)
   return out;
 }
 
-}  // namespace ofep
+}  // namespace nasa95
 
 #else  // Netgen 없이 빌드
 
-namespace ofep {
+namespace nasa95 {
 
 bool mesher_available() { return false; }
 std::string mesher_name() { return ""; }
@@ -176,6 +176,6 @@ MesherOutput run_mesher(App&, Id, const MesherRequest&) { throw Error("not_avail
 MesherProgress mesher_progress() { return {}; }
 void mesher_cancel() {}
 
-}  // namespace ofep
+}  // namespace nasa95
 
 #endif

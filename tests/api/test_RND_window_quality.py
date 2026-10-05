@@ -24,7 +24,7 @@ def test_RND_T04_17_window_ssaa_resize_pick(app):
     user.DestroyWindow.argtypes = [wintypes.HWND]
     user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
     # WS_POPUP, WS_VISIBLE 없음: 사용자의 창과 바탕 화면을 건드리지 않는다.
-    hwnd = user.CreateWindowExW(0, "STATIC", "open-fep render test", 0x80000000, 0, 0, 400, 300, None, None, None, None)
+    hwnd = user.CreateWindowExW(0, "STATIC", "NASA-95 render test", 0x80000000, 0, 0, 400, 300, None, None, None, None)
     assert hwnd, ctypes.get_last_error()
     try:
         part = box(app)

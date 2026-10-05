@@ -10,12 +10,13 @@
 #include <sstream>
 #include <thread>
 
-#include "ofep/app.hpp"
-#include "ofep/deck.hpp"
-#include "ofep/error.hpp"
-#include "ofep/process.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/deck.hpp"
+#include "nasa95/solver.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/process.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -25,6 +26,7 @@ namespace fs = std::filesystem;
 struct Run {
   Process process;
   std::string job, work, deck, log, solver;
+  std::string solver_name;  // 백엔드 이름(calculix·opensees·mystran)
   std::string digest;  // 실행 시작 때의 모델·메시 다이제스트(결과가 모델보다 오래됐는지 판정)
   bool check_only = false, stopped = false;
   std::chrono::steady_clock::time_point started, finished;
@@ -51,28 +53,30 @@ const Object& case_of(const App& a, const Json& p) {
   return o;
 }
 
-// 솔버 실행 파일: 케이스의 지정 → 프로그램 설정(app.settings_set solver_executable) → 환경 변수 OFEP_CCX.
+// 솔버 실행 파일: 케이스의 지정 → 프로그램 설정(백엔드의 setting_key: solver_executable·opensees_executable·mystran_executable) → 환경 변수(백엔드의 env_var).
 std::string solver_path(App& a, const Object& cs) {
+  const SolverSpec& spec = solver_spec(case_solver(cs));
   std::string exe = cs.props.value("solver_executable", std::string());
   if (exe.empty()) {
-    const Json s = program_setting(a, "solver_executable");
+    const Json s = program_setting(a, spec.setting_key);
     if (s.is_string()) exe = s.get<std::string>();
   }
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996)  // getenv: 읽기만 한다
 #endif
-  const char* env = exe.empty() ? std::getenv("OFEP_CCX") : nullptr;
+  const char* env = exe.empty() ? std::getenv(spec.env_var.c_str()) : nullptr;
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
   if (env) exe = env;
   if (exe.empty())
-    throw Error("solver_not_found", "솔버 실행 파일이 지정되지 않았습니다(케이스의 solver_executable, 프로그램 설정 solver_executable, 환경 변수 OFEP_CCX)",
-                {{"object", cs.id}});
+    throw Error("solver_not_found",
+                spec.label + " 실행 파일이 지정되지 않았습니다(케이스의 solver_executable, 프로그램 설정 " + spec.setting_key + ", 환경 변수 " + spec.env_var + ")",
+                {{"object", cs.id}, {"solver", spec.name}});
   std::error_code ec;
   if (!fs::is_regular_file(path_of(exe), ec))
-    throw Error("solver_not_found", "솔버 실행 파일이 없습니다: " + exe, {{"object", cs.id}, {"path", exe}});
+    throw Error("solver_not_found", "솔버 실행 파일이 없습니다: " + exe, {{"object", cs.id}, {"path", exe}, {"solver", spec.name}});
   return exe;
 }
 
@@ -100,7 +104,7 @@ fs::path work_dir(App& a, const Object& cs, const std::string& job) {
   } else if (!project.empty()) {
     dir = base / (utf8(path_of(project).stem()) + ".work") / job;
   } else {
-    dir = fs::temp_directory_path() / "openfep" / job;
+    dir = fs::temp_directory_path() / "nasa95" / job;
   }
   std::error_code ec;
   fs::create_directories(dir, ec);
@@ -140,7 +144,19 @@ Json status(App& a, const Object& cs, std::size_t tail_lines) {
   if (it == runs(a).end()) return Json{{"state", "none"}, {"case", cs.id}};
   Run& r = *it->second;
   const bool running = r.process.running();
-  if (!running && !r.finish_seen) r.finished = std::chrono::steady_clock::now(), r.finish_seen = true;
+  if (!running && !r.finish_seen) {
+    r.finished = std::chrono::steady_clock::now(), r.finish_seen = true;
+    // 백엔드의 뒷정리(MyStran: F06 → frd). 실패는 로그에 적고 상태는 solver 의 종료 코드로 판단한다
+    const SolverSpec& spec = solver_spec(r.solver_name.empty() ? case_solver(cs) : r.solver_name);
+    if (spec.after_run && !r.stopped && !r.check_only) {
+      try {
+        spec.after_run(a, cs, r.work, r.job);
+      } catch (const Error& e) {
+        std::ofstream lf(path_of(r.log), std::ios::app);
+        lf << "\n*ERROR NASA-95: 결과 변환 실패: " << e.what() << "\n";
+      }
+    }
+  }
   const auto end = running ? std::chrono::steady_clock::now() : r.finished;
   const std::string log = read_tail(path_of(r.log));
   const std::vector<std::string> lines = lines_of(log);
@@ -170,7 +186,7 @@ Json status(App& a, const Object& cs, std::size_t tail_lines) {
                                 {"iterations", static_cast<int>(v[3])}, {"total_time", v[4]}, {"step_time", v[5]}, {"increment_size", v[6]}});
   }
   Json files = Json::object();
-  for (const char* ext : {"inp", "frd", "dat", "sta", "cvg", "eig"}) {
+  for (const char* ext : {"inp", "tcl", "bdf", "frd", "dat", "sta", "cvg", "eig", "F06", "OP2"}) {
     std::error_code ec;
     const fs::path f = fs::path(stem).concat(std::string(".") + ext);
     if (fs::is_regular_file(f, ec)) files[ext] = Json{{"path", utf8(f)}, {"bytes", static_cast<std::uint64_t>(fs::file_size(f, ec))}};
@@ -192,6 +208,8 @@ Json start(App& a, const Json& p, bool check_only, int restart_step = 0) {
   if (existing != runs(a).end() && existing->second->process.running())
     throw Error("invalid_state", "이 케이스는 이미 실행 중입니다", {{"object", cs.id}});
   const std::string exe = solver_path(a, cs);
+  const SolverSpec& spec = solver_spec(case_solver(cs));
+  if (!spec.restart && restart_step > 0) throw Error("not_supported", spec.label + " 케이스는 재시작을 지원하지 않습니다", {{"object", cs.id}});
   DeckOptions options;
   options.no_analysis = check_only;
   options.restart_from_step = restart_step;
@@ -215,10 +233,11 @@ Json start(App& a, const Json& p, bool check_only, int restart_step = 0) {
     if (ec) throw Error("io_error", "재시작 파일을 복사할 수 없습니다: " + utf8(rout), {{"path", utf8(rout)}});
   }
   run->work = utf8(dir), run->solver = exe, run->check_only = check_only;
-  run->deck = utf8(dir / (run->job + ".inp"));
+  run->deck = utf8(dir / (run->job + "." + spec.deck_extension));
+  run->solver_name = spec.name;
   run->log = utf8(dir / (run->job + ".log"));
   // 앞선 실행의 산출물이 남아 있으면 이번 결과와 헷갈린다.
-  for (const char* ext : {"frd", "dat", "sta", "cvg", "log"}) {
+  for (const char* ext : {"frd", "dat", "sta", "cvg", "log", "F06", "ERR", "OP2"}) {
     std::error_code ec;
     fs::remove(dir / (run->job + "." + ext), ec);
   }
@@ -231,7 +250,7 @@ Json start(App& a, const Json& p, bool check_only, int restart_step = 0) {
   if (cs.props.contains("threads") && !cs.props["threads"].is_null()) env["OMP_NUM_THREADS"] = cs.props["threads"].dump();
   else if (const Json t = program_setting(a, "threads"); t.is_number_integer()) env["OMP_NUM_THREADS"] = t.dump();
   run->started = std::chrono::steady_clock::now();
-  run->process.start(exe, {"-i", run->job}, run->work, env, run->log);
+  run->process.start(exe, spec.run_args(run->job), run->work, env, run->log);  // OpenSees 는 스크립트가 <job>.frd·<job>.sta 를 쓴다
   runs(a)[cs.id] = run;
   if (p.value("wait", false)) run->process.wait();
   Json out = status(a, cs, 20);
@@ -375,6 +394,28 @@ void register_run_commands(App& app) {
     };
     app.register_command(std::move(w));
   }
+  {
+    CommandSpec c = base("solver.list", 'Q', "등록된 솔버 백엔드와 지원 범위(기능 표)를 조회한다: 이름·덱 확장자·실행 파일 환경 변수·프로그램 설정 키·라이선스 메모·"
+                                         "지원 스텝 종류·요소 형상·하중·경계조건·프로퍼티·재료 구성 모델·구속, 실행 파일이 잡히는지(executable)", "CAS-44, CAS-45");
+    c.target = "";
+    c.params = {};
+    c.fn = [](App& a, const Json&) {
+      Json out = Json::array();
+      for (const SolverSpec& spec : solver_specs()) {
+        Json j = solver_capabilities(spec);
+        Object fake;
+        fake.kind = "case", fake.props["solver"] = spec.name;
+        try {
+          j["executable"] = solver_path(a, fake);
+        } catch (const Error&) {
+          j["executable"] = nullptr;
+        }
+        out.push_back(j);
+      }
+      return out;
+    };
+    app.register_command(std::move(c));
+  }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

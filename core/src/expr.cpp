@@ -1,12 +1,12 @@
-#include "ofep/expr.hpp"
+#include "nasa95/expr.hpp"
 
 #include <cctype>
 #include <cmath>
 #include <vector>
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -148,4 +148,4 @@ double evaluate_expression(const std::string& text, const std::map<std::string, 
   return Parser(text, variables).parse();
 }
 
-}  // namespace ofep
+}  // namespace nasa95

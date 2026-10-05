@@ -3,8 +3,12 @@ build/
 __pycache__/
 *.pyc
 .pytest_cache/
-python/openfep/*.pyd
-python/openfep/*.pdb
+python/nasa95/*.pyd
+python/nasa95/*.pdb
 .vs/
 CMakeUserPresets.json
-python/openfep/_dll_dirs.txt
+python/nasa95/_dll_dirs.txt
+python/nasa95/*.pyd.*
+python/nasa95/*.pyd
+*.pyd.old*
+*.pyd.inuse

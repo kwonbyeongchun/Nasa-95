@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -156,7 +156,7 @@ def test_GEO_T09_failed_feature(app):
     assert st["ok"] is True and measure(app, p)["bbox"]["min"][0] == pytest.approx(1.0)
     # 형상이 없는 파트, 도구가 없는 빼기, 서로를 도구로 쓰는 파트
     empty = app.model.parts.create(name="EMPTY")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         measure(app, empty)
     assert e.value.code == "invalid_state"
     assert app.execute("geometry.entities", id=empty.id)["faces"] == 0
@@ -166,11 +166,11 @@ def test_GEO_T09_failed_feature(app):
     a, b = box(app, "A"), box(app, "B")
     a.features.create_fuse(tools=[b.id])
     b.features.create_fuse(tools=[a.id])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         measure(app, a)
     assert e.value.code == "invalid_state"
     assert after.id
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("geometry.measure", id=bad.id)
     assert e.value.code == "wrong_kind"
 
@@ -215,11 +215,11 @@ def test_GEO_T01_export_import_round_trip(app, tmp_path):
     for params, code in [(dict(path=str(folder / "none.step")), "io_error"), (dict(path=str(folder / "plate.xyz")), "unsupported"),
                          (dict(path=str(folder / "plate.step"), format="dxf"), "out_of_range"),
                          (dict(path=str(folder / "plate.step"), scale=0.0), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("geometry.import", **params)
         assert e.value.code == code, params
     (folder / "broken.step").write_text("not a step file")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("geometry.import", path=str(folder / "broken.step"))
     assert e.value.code == "parse_error" and len(app.execute("part.list")) == 4
 
@@ -231,9 +231,9 @@ def test_GEO_T01_project_save_keeps_geometry(app, tmp_path):
     app.execute("geometry.export", id=p.id, path=str(tmp_path / "b.step"))
     r = app.execute("geometry.import", path=str(tmp_path / "b.step"))
     (tmp_path / "b.step").unlink()  # 형상은 프로젝트에 들어 있어 원본 파일이 없어도 된다
-    app.execute("project.save_as", path=str(tmp_path / "m.ofep"))
+    app.execute("project.save_as", path=str(tmp_path / "m.nasa95"))
     other = App()
-    other.execute("project.open", path=str(tmp_path / "m.ofep"))
+    other.execute("project.open", path=str(tmp_path / "m.nasa95"))
     assert other.digest() == app.digest()
     assert other.execute("geometry.measure", id=r["id"])["volume"] == pytest.approx(6000.0)
     assert other.execute("geometry.measure", id=p.id)["volume"] == pytest.approx(6000.0)
@@ -263,10 +263,10 @@ def test_GEO_T02_topology(app):
     assert app.execute("geometry.check", id=p.id, small_edge=15.0)["small_edges"] == [e["index"] for e in edges if e["length"] < 15]
     assert total(app) == before and history_len(app) == hist
     for params, code in [(dict(type="face", index=7), "not_found"), (dict(type="wire", index=1), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("geometry.entity_info", id=p.id, **params)
         assert e.value.code == code
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         measure(app, p, type="face")
     assert e.value.code == "missing_param"
 
@@ -307,7 +307,7 @@ def test_GEO_T02_tessellation(app):
     assert outward(fine, [0, 0, 0])
     radial = fine["points"] / np.linalg.norm(fine["points"], axis=1, keepdims=True)
     assert np.allclose(np.einsum("ij,ij->i", fine["normals"], radial), 1.0, atol=1e-6)  # 구의 법선은 반지름 방향
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.geometry.tessellation(app.model.parts.create(name="EMPTY").id)
     assert e.value.code == "invalid_state"
 
@@ -439,7 +439,7 @@ def test_GEO_T03_datums(app):
     bad = box(app, "BAD", (1.0, 1.0, 1.0))
     bad.features.create_split(datum=pt.id)  # 점에는 방향이 없다
     assert app.execute("feature.status", id=bad.id)["features"][-1]["code"] == "invalid_param"
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("datum.delete", id=plane.id)  # 피처가 참조한다
 
 
@@ -501,7 +501,7 @@ def test_GEO_T02_find(app):
     assert smooth["count"] == 26  # 모두 접선 연속으로 이어진다
     sharp = app.execute("geometry.find", id=p.id, type="face", seed=top["indices"][0], tolerance=5.0)
     assert sharp["indices"] == top["indices"]  # 상자의 면은 직각이라 자기 자신뿐
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         find(type="edge", seed=1)
 
 
@@ -524,7 +524,7 @@ def test_GEO_feature_tree_ops(app):
     assert measure(app, plate)["volume"] == pytest.approx(16000.0 - math.pi * 25 * 10, rel=1e-9)
     r = app.execute("feature.rollback", id=plate.id)
     assert r["rollback"] is None and measure(app, plate)["volume"] == pytest.approx(v_all)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("feature.rollback", id=plate.id, feature=app.execute("feature.list", parent=drill.id)[0]["id"])
     assert e.value.code == "invalid_param"
     # history: 상자가 면 6개를 만들고, 컷이 구멍 면 1개를 더하며 윗면·아랫면을 바꾼다(없어지고 새로 생김)
@@ -542,7 +542,7 @@ def test_GEO_feature_tree_ops(app):
     side = [e["index"] for e in app.execute("geometry.entities", id=plate.id, type="face")["entities"] if e["surface"] == "plane"]
     first_box = app.execute("feature.list", parent=plate.id)[0]["id"]
     assert any(app.execute("feature.history", id=plate.id, type="face", index=i)["created_by"] == first_box for i in side)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("feature.history", id=plate.id, type="face", index=99)
     assert e.value.code == "out_of_range"
     # reorder: 필렛을 컷 앞으로 → 상자의 모서리를 둥글리고 그 뒤 컷. 둘 다 ok 이고 (구멍과 떨어진 모서리라) 부피는 같다
@@ -561,7 +561,7 @@ def test_GEO_feature_tree_ops(app):
     assert r["value"] == [line_edge, line_edge + 1] and app.execute("feature.get", id=fillet.id)["props"]["edges"] == [line_edge, line_edge + 1]
     for params, code in [({"field": "edges", "from": 50, "to": 2}, "not_found"), ({"field": "edges", "entities": [999]}, "out_of_range"),
                          ({"field": "radius", "from": 1, "to": 2}, "invalid_param"), ({"field": "edges"}, "missing_param")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("feature.rebind", id=fillet.id, **params)
         assert e.value.code == code
 
@@ -769,12 +769,12 @@ def test_GEO_sketch(app):
     assert ent(r["entities"][0])["radius"] == 2.0 and ent(r["entities"][1])["start"] == pytest.approx([0.0, 1.0])
     for params, code in [({"operation": "fillet", "entities": [a], "radius": 1.0}, "missing_param"), ({"operation": "trim", "entity": c, "start": 0, "end": 1}, "invalid_param"),
                          ({"operation": "trim", "entity": 99}, "not_found"), ({"operation": "fillet", "entities": [a, axis], "radius": 1.0}, "invalid_geometry")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("sketch.edit", id=sk2, **params)
         assert e.value.code == code
     n = len(app.execute("sketch.get", id=sk2)["props"]["entities"])
     assert app.execute("sketch.remove", id=sk2, entities=[c])["count"] == n - 1
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("sketch.remove", id=sk2, entities=[c])
     # 그 밖의 요소와 잘못된 요소
     sk3 = app.execute("sketch.create", name="S3", parent=part.id, point=[0, 0, 5], normal=[0, 1, 0], x_axis=[1, 0, 0])["id"]
@@ -785,13 +785,13 @@ def test_GEO_sketch(app):
     app.execute("sketch.add_spline", id=sk3, points=[[0, 0], [5, 3], [10, 0]])
     assert app.execute("sketch.profiles", id=sk3)["count"] == 3  # 호와 스플라인이 끝점을 공유해 영역을 만들고 타원이 그것을 가른다
     for params, code in [({"start": [0, 0], "middle": [5, 0], "end": [10, 0]}, "invalid_geometry")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("sketch.add_arc", id=sk3, **params)
         assert e.value.code == code
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("sketch.add_line", id=sk3, start=[0, 0])
     assert e.value.code == "missing_param"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("sketch.add_line", id=part.id, start=[0, 0], end=[1, 1])
     assert e.value.code == "wrong_kind"
     # 투영: 상자의 모서리(평면과 나란한 선분은 선분, 수직 선분은 점으로 찍혀 스플라인)·꼭짓점 → 참조 요소(단면에 쓰이지 않음)
@@ -881,10 +881,10 @@ def test_GEO_T02_01_02_03_04_assembly_round_trip(app, tmp_path):
     b.update(assembly=sub.id, color=[0.1, 0.3, 0.9])
     c = box(app, "C", (4.0, 4.0, 4.0), origin=[40.0, 0.0, 0.0])
     c.update(assembly=sub.id)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         top.update(assembly=sub.id)  # 순환
     assert e.value.code == "cyclic_dependency"
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         a.update(color=[1.0, 0.0])
 
     def tree():
@@ -922,7 +922,7 @@ def test_GEO_T02_01_02_03_04_assembly_round_trip(app, tmp_path):
     assert tree() == [("TOP", [("SUB", [("C", [])]), ("A", [])]), ("B", [])]
     app.undo(), app.undo()
     assert tree() == [("TOP", [("SUB", [("B", []), ("C", [])]), ("A", [])])]
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("part.move", id=bid, assembly=bid)
     # 단일 파트의 색도 STEP 으로 왕복한다
     single = tmp_path / "one.step"
@@ -1069,7 +1069,7 @@ def test_GEO_T14_05_06_07_08_09_10_14_sketch_constraints(app):
     # 잘못된 구속 정의는 거부되고 모델은 그대로
     n = len(A("sketch.get", id=sk)["props"]["constraints"])
     for params in (dict(kind="horizontal", entities=[c1]), dict(kind="coincident", points=[{"entity": l1, "point": "start"}]), dict(kind="radius", entities=[l1])):
-        with pytest.raises(OfepError):
+        with pytest.raises(Nasa95Error):
             A("sketch.add_dimension" if params["kind"] == "radius" else "sketch.add_constraint", id=sk, **params, **({"value": 1.0} if params["kind"] == "radius" else {}))
     assert len(A("sketch.get", id=sk)["props"]["constraints"]) == n
 
@@ -1084,7 +1084,7 @@ def test_GEO_T03_04_05_persistent_entity_names(app, tmp_path):
     assert len(before) == 6 and all(n.startswith("f") and ":face:" in n for n in before)
     assert len({e["name"] for e in _ents(app, b, "edge")}) == 12 and len({e["name"] for e in _ents(app, b, "vertex")}) == 8
     # 저장 → 열기(GEO-T03-04)
-    path = tmp_path / "names.ofep"
+    path = tmp_path / "names.nasa95"
     app.execute("project.save_as", path=str(path))
     app.execute("project.new")
     app.execute("project.open", path=str(path))
@@ -1159,7 +1159,7 @@ def test_GEO_T14_16_17_18_19_sketch_drawing_helpers(app):
     side = app.execute("sketch.point_from_screen", id=sk, x=400, y=300, width=W, height=H,
                        camera={"eye": [-100.0, 15.0, 10.0], "target": [20.0, 15.0, 10.0], "up": [0.0, 0.0, 1.0], "projection": "orthographic", "height": 60.0})
     assert side["hit"] is False
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("sketch.point_from_screen", id=sk, x=1, y=1, width=W, height=H, camera={"eye": [0, 0, 0]})
     assert e.value.code == "invalid_param"
     # 렌더러가 있으면 실제 카메라로: 화면 가운데를 찍어 고른 면이 윗면이고, 같은 픽셀의 평면 교점이 그 면 안에 있다
@@ -1175,7 +1175,7 @@ def test_GEO_T14_16_17_18_19_sketch_drawing_helpers(app):
                 if info["surface"] == "plane" and abs(info["center"][2] - 10.0) < 1e-9:
                     assert 0.0 <= q["uv"][0] <= 40.0 and 0.0 <= q["uv"][1] <= 30.0
                     assert q["uv"] == pytest.approx([20.0, 15.0], abs=0.5)  # 전체 맞춤의 화면 중앙은 상자 중심
-        except OfepError as err:
+        except Nasa95Error as err:
             if err.code != "not_available":
                 raise
     # GEO-T14-18 스냅

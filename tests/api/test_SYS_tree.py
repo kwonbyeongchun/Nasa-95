@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from meshutil import block
 
@@ -69,7 +69,7 @@ def test_SYS_19_01_02_10_12_CAS_T01_16_hierarchy(app):
     # 부분 조회(SYS-19-10)
     only = app.execute("project.tree", kind="material")
     assert len(only) == 1 and only[0]["kind"] == "material" and _names(only[0]["items"]) == ["M"]
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("project.tree", kind="material", sort="weird")
 
 
@@ -148,7 +148,7 @@ def test_SYS_19_09_19_case_dependencies(app):
     dep = app.execute("case.dependencies")
     assert dep["edges"] == [{"case": c2.id, "needs": c1.id}] and dep["order"] == [c1.id, c2.id]
     assert app.execute("case.get", id=c2.id)["props"]["links"] == [c1.id]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.link", id=c1.id, source=c2.id)  # 순환
     assert e.value.code == "cyclic_dependency"
     # 연결 해제(SYS-19-19)
@@ -180,7 +180,7 @@ def test_SYS_20_05_11_suppressed_and_inactive(app):
     f.unsuppress()
     loads = {c["name"]: c for c in next(i for i in _branch(app, "load_set")["items"] if i["id"] == own)["children"]}
     assert loads["F"]["suppressed"] is False and "inactive" not in loads["F"]  # 스텝을 주지 않으면 비활성 판정이 없다
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("project.tree", step=case.id)
 
 

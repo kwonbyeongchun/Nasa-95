@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from openfep import App
+from nasa95 import App
 
 
 def block(app: App, nx: int, ny: int, nz: int, size=(100.0, 20.0, 10.0), part: int | None = None,

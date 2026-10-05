@@ -6,7 +6,7 @@ tc-00-system.md (SYS-08~10). M1 = 박스 100×20×10.
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 from meshutil import block, plate
@@ -46,12 +46,12 @@ def test_MSH_T01_02_03_invalid_elements(app):
         (dict(shape="hex8", connectivity=[ids], type="C3D4"), "out_of_range"),  # 형상에 맞지 않는 타입
         (dict(shape="hex8", connectivity=[ids, ids], ids=[5]), "invalid_param_type"),  # ID 개수 불일치
     ]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.elements_create", **params)
         assert e.value.code == code, params
         assert total(app) == before
     app.execute("mesh.elements_create", shape="hex8", connectivity=[ids], ids=[7])
-    with pytest.raises(OfepError) as e:  # 같은 ID
+    with pytest.raises(Nasa95Error) as e:  # 같은 ID
         app.execute("mesh.elements_create", shape="hex8", connectivity=[ids], ids=[7])
     assert e.value.code == "name_conflict"
 
@@ -67,12 +67,12 @@ def test_MSH_T04_03_04_05_node_editing(app):
     app.execute("mesh.nodes_project", ids=[extra], point=[0, 0, 0], normal=[0, 0, 2])
     assert app.execute("mesh.nodes", ids=[extra])["coords"] == [[7.0, 7.0, 0.0]]
     before = total(app)
-    with pytest.raises(OfepError) as e:  # 요소가 쓰는 노드는 지울 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 요소가 쓰는 노드는 지울 수 없다
         app.execute("mesh.nodes_delete", ids=[1])
     assert e.value.code == "referenced" and total(app) == before
     app.execute("mesh.nodes_delete", ids=[extra])
     assert app.execute("project.info")["nodes"] == 8
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.nodes_project", ids=[1], point=[0, 0, 0], normal=[0, 0, 0])
     assert e.value.code == "out_of_range"
     assert eid == 1
@@ -122,9 +122,9 @@ def test_ALL_04_mesh_commands_undo_redo(app):
 def test_ALL_03_06_mesh_failure_restores(app):
     cube(app)
     before, hist = total(app), history_len(app)
-    with pytest.raises(OfepError):  # 일부 요소만 유효하지 않은 타입 → 아무것도 바뀌지 않는다
+    with pytest.raises(Nasa95Error):  # 일부 요소만 유효하지 않은 타입 → 아무것도 바뀌지 않는다
         app.execute("mesh.set_element_type", type="S4")
-    with pytest.raises(OfepError):  # 묶음 안에서 실패하면 묶음 전체가 되돌려진다
+    with pytest.raises(Nasa95Error):  # 묶음 안에서 실패하면 묶음 전체가 되돌려진다
         with app.transaction("메시 편집"):
             app.execute("mesh.nodes_create", coords=[[3.0, 3.0, 3.0]])
             app.execute("mesh.nodes_delete", ids=[1])
@@ -139,7 +139,7 @@ def test_SYS_08_01_04_save_open_with_mesh(app, tmp_path):
     app.execute("mesh.set_element_type", ids=[1], type="C3D8I")
     d = app.digest()
     assert "mesh" in d["areas"]
-    path = str(tmp_path / "m.ofep")
+    path = str(tmp_path / "m.nasa95")
     app.execute("project.save_as", path=path)
     other = App()
     other.execute("project.open", path=path)
@@ -332,7 +332,7 @@ def test_MSH_T08_01_02_03_element_type(app):
     assert {e["type"] for e in app.execute("mesh.elements")} == {"C3D8R"}
     assert app.execute("mesh.statistics")["by_type"] == {"C3D8R": 2}
     before = total(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.set_element_type", ids=[1], type="C3D4")
     assert e.value.code == "out_of_range" and total(app) == before
     types = {t["shape"]: t for t in app.execute("mesh.element_types")}
@@ -346,7 +346,7 @@ def test_MSH_T08_12_network_element(app):
     ids = app.execute("mesh.nodes_create", coords=[[0, 0, 0], [1, 0, 0], [2, 0, 0]])["ids"]
     # 입구: 첫 절점이 0. 네트워크 요소(TYPE=D)에서만 허용된다
     app.execute("mesh.elements_create", shape="line3", type="D", connectivity=[[0, ids[0], ids[1]], [ids[1], ids[2], 0]])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.elements_create", shape="line3", type="B32", connectivity=[[0, ids[0], ids[1]]])
     assert e.value.code == "not_found"
     assert app.execute("mesh.check")["unreferenced_nodes"] == []
@@ -357,7 +357,7 @@ def test_mesh_part_reference(app):
     part = app.model.mesh_parts.create(name="P")
     mat = app.model.materials.create(name="m")
     prop = app.model.properties.create_solid(material=mat.id, target={"type": "parts", "ids": [part.id]})
-    with pytest.raises(OfepError) as e:  # 프로퍼티가 쓰는 메시 파트는 지울 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 프로퍼티가 쓰는 메시 파트는 지울 수 없다
         part.delete()
     assert e.value.code == "referenced" and e.value.details["references"][0]["id"] == prop.id
 
@@ -394,7 +394,7 @@ def test_MSH_improve_smoothing(app):
     e = app.execute("mesh.elements", ids=[b["elements"][0]])[0]
     xyz = app.execute("mesh.nodes", ids=e["nodes"])["coords"]
     assert xyz[8] == pytest.approx([(a + c) / 2 for a, c in zip(xyz[0], xyz[1])])  # 첫 변의 중간 절점
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         App().execute("mesh.improve")
 
 
@@ -413,7 +413,7 @@ def test_BC_contact_detect(app):
     assert len(pair["faces_a"]) == 4 and len(pair["faces_b"]) == 4 and pair["master"] == "a"  # 아래 파트의 윗면 4개 ↔ 위 파트의 아랫면 4개
     assert pair["gap_min"] == pytest.approx(0.05) and pair["gap_max"] == pytest.approx(0.05)
     assert app.execute("contact.detect", tolerance=0.01)["pairs"] == []  # 간격보다 작은 허용 오차
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("contact.detect", tolerance=0.1, parts=[lower.id])
     assert e.value.code == "invalid_state"
     # 타이 구속 만들기
@@ -425,7 +425,7 @@ def test_BC_contact_detect(app):
     assert ms["name"] == "T_master" and ms["props"]["type"] == "surface" and sorted(ms["props"]["faces"]) == sorted(pair["faces_a"])
     assert history_len(app) == n + 1  # 셋 둘과 구속이 한 단계
     # 접촉 쌍: 접촉 속성이 필요
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("contact.create_from_detection", pair=pair)
     assert e.value.code == "missing_param"
     inter = app.model.contact_properties.create(name="INT1", pressure_overclosure="linear", slope=1e6)
@@ -440,7 +440,7 @@ def test_BC_contact_detect(app):
     case.steps.create_static()
     deck = app.execute("case.preview_deck", id=case.id)["text"]
     assert "*TIE" in deck and "*CONTACT PAIR" in deck and "*SURFACE, NAME=T_master, TYPE=ELEMENT" in deck
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("contact.create_from_detection", pair={"part_a": 1}, kind="tie")
     assert e.value.code == "invalid_param"
 
@@ -482,6 +482,6 @@ def test_MSH_create_crack(app):
     assert app.execute("mesh.free_faces")["count"] == 4 * 2 * 2 + 4 * 2 * 2 + 2 * 2 * 2 - 0 + 4  # 상자 겉면 + 균열면 2개 × 2
     app.undo()
     assert app.execute("project.info")["nodes"] == n0 and app.execute("set.list") == []
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.create_crack", faces={"type": "faces", "ids": fr["faces"][:1]})  # 겉면은 가를 것이 없다
     assert e.value.code == "invalid_state"

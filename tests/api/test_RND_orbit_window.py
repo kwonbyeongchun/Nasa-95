@@ -22,7 +22,7 @@ def test_RND_T01_33_window_pivot_with_ssaa_and_resize(app):
                                    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
     user.DestroyWindow.argtypes = [wintypes.HWND]
     user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT]
-    hwnd = user.CreateWindowExW(0, "STATIC", "open-fep orbit test", 0x80000000, 0, 0, 400, 300, None, None, None, None)
+    hwnd = user.CreateWindowExW(0, "STATIC", "NASA-95 orbit test", 0x80000000, 0, 0, 400, 300, None, None, None, None)
     assert hwnd, ctypes.get_last_error()
     try:
         part = box(app)

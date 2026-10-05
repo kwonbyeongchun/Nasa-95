@@ -1,7 +1,7 @@
 """전수 검사: Undo/Redo(ALL-04), 변경 통지(ALL-05), 객체 공통 동작(ALL-07)."""
 import pytest
 
-from openfep import OfepError
+from nasa95 import Nasa95Error
 
 from conftest import Builder, history_len, total
 
@@ -206,10 +206,10 @@ def test_ALL_07_11_parent_rules(app, build):
     case = build.make("case")
     step = app.execute("step.create_static", parent=case)["id"]
     assert app.execute("step.get", id=step)["parent"] == case
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("step.create_static", parent=999999)
     assert e.value.code == "not_found"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("step.create_static")
     assert e.value.code == "missing_param"
 
@@ -240,10 +240,10 @@ def test_ALL_07_03_04_rename_and_name_rules(app, build):
         name = f"alpha-{sub}"  # 같은 종류의 다른 하위 종류와 겹치지 않게
         app.execute(f"{kind}.rename", id=a, name=name)
         assert app.execute(f"{kind}.get", id=a)["name"] == name
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute(f"{kind}.rename", id=b, name=name)
         assert e.value.code == "name_conflict", f"{kind}.{sub}"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("material.create", name="has space")
     assert e.value.code == "invalid_name"
 
@@ -270,7 +270,7 @@ def test_ALL_07_06_copy_with_children(app, build):
     case = build.make("case")
     step = build.make("step", "static", parent=case)
     func = build.make("function", "amplitude")
-    build.make("load", "force", parent=step, amplitude=func)
+    load = build.make("load", "force", parent=step, amplitude=func)
     copy = app.execute("case.copy", id=case)["id"]
     steps = app.execute("step.list", parent=copy)
     assert len(steps) == 1 and steps[0]["id"] != step
@@ -286,7 +286,7 @@ def test_ALL_07_07_delete(app, build):
         oid = build.make(kind, sub)
         app.execute(f"{kind}.delete", id=oid)
         assert oid not in [o["id"] for o in app.execute(f"{kind}.list")]
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute(f"{kind}.get", id=oid)
         assert e.value.code == "not_found"
 
@@ -295,7 +295,7 @@ def test_ALL_07_07_delete(app, build):
 def test_ALL_07_08_delete_referenced(app, build):
     mat = build.make("material")
     prop = build.make("property", "solid", material=mat)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("material.delete", id=mat)
     assert e.value.code == "referenced"
     refs = e.value.details["references"]
@@ -341,6 +341,6 @@ def test_ALL_07_10_14_move(app, build):
     # 허용되지 않는 상위 객체
     mat = build.make("material")
     before = total(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("load.move", id=load, parent=mat)
     assert e.value.code == "invalid_parent" and total(app) == before

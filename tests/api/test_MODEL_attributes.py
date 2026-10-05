@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -36,7 +36,7 @@ def test_MAT_T01_03_04_elastic_forms(app):
             row = [210000.0, 0.3]
         m.set_elastic(type=kind, data=[row])
         assert m.props["behaviors"]["elastic"] == {"type": kind, "data": [row]}
-        with pytest.raises(OfepError) as e:  # 상수 개수가 맞지 않으면 거부
+        with pytest.raises(Nasa95Error) as e:  # 상수 개수가 맞지 않으면 거부
             m.set_elastic(type=kind, data=[row + [1.0, 2.0]])
         assert e.value.code == "invalid_param_type"
 
@@ -48,7 +48,7 @@ def test_MAT_T01_05_06_hardening_curve(app):
     m.set_plastic(data=curve)
     assert app.execute("material.curve", id=m.id, behavior="plastic")["data"] == curve
     before = total(app)
-    with pytest.raises(OfepError) as e:  # 소성 변형률이 감소하는 곡선
+    with pytest.raises(Nasa95Error) as e:  # 소성 변형률이 감소하는 곡선
         m.set_plastic(data=[[250.0, 0.0], [300.0, 0.2], [350.0, 0.1]])
     assert e.value.code == "invalid_order" and total(app) == before
     # 첫 점의 소성 변형률이 0 이 아니면 저장은 되지만 검사에서 지목된다
@@ -63,10 +63,10 @@ def test_MAT_T01_09_20_temperature_dependence(app):
     r = app.execute("material.curve", id=m.id, behavior="elastic", temperature=110.0)
     assert r["values"] == pytest.approx([200000.0, 0.31])
     assert app.execute("material.curve", id=m.id, behavior="elastic", temperature=-50.0)["values"][0] == 210000.0
-    with pytest.raises(OfepError) as e:  # 온도가 오름차순이 아님
+    with pytest.raises(Nasa95Error) as e:  # 온도가 오름차순이 아님
         m.set_elastic(data=[[210000.0, 0.3, 200.0], [190000.0, 0.3, 20.0]])
     assert e.value.code == "invalid_order"
-    with pytest.raises(OfepError) as e:  # 여러 행인데 온도 열이 없음
+    with pytest.raises(Nasa95Error) as e:  # 여러 행인데 온도 열이 없음
         m.set_elastic(data=[[210000.0, 0.3], [190000.0, 0.3]])
     assert e.value.code == "invalid_param_type"
 
@@ -89,7 +89,7 @@ def test_MAT_T01_18_remove_behavior(app):
     assert "creep" not in m.props["behaviors"]
     app.undo()
     assert "creep" in m.props["behaviors"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         m.remove_hyperfoam()
     assert e.value.code == "not_found"
 
@@ -114,7 +114,7 @@ def test_MAT_T02_05_hyperelastic_constant_counts(app):
                 ("polynomial", 3): 12, ("reduced_polynomial", 2): 4}
     for (model, n), count in expected.items():
         m.set_hyperelastic(model=model, n=n, data=[[1.0] * count])
-        with pytest.raises(OfepError):
+        with pytest.raises(Nasa95Error):
             m.set_hyperelastic(model=model, n=n, data=[[1.0] * (count + 2)])
 
 
@@ -124,7 +124,7 @@ def test_MAT_T01_12_orientation(app):
     ori = app.model.orientations.create_rectangular(a=[1, 0, 0], b=[0, 1, 0])
     m.set_orientation(orientation=ori.id)
     assert m.props["orientation"] == ori.id
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         ori.delete()
     assert e.value.code == "referenced"
     m.set_orientation(orientation=None)
@@ -146,7 +146,7 @@ def test_MAT_T01_13_24_library(app, tmp_path):
     r = other.execute("material.library_import", path=path, names=["steel"])
     assert [c["name"] for c in r["created"]] == ["steel-2"]
     before = total(other)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         other.execute("material.library_import", path=path, names=["없는 재료"])
     assert e.value.code == "not_found" and total(other) == before
 
@@ -175,7 +175,7 @@ def test_PRP_T01_05_21_section_values(app):
 @pytest.mark.feature("PRP-05")
 def test_PRP_T02_beam_dimension_count(app):
     m = steel(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.model.properties.create_beam(material=m.id, section="box", dimensions=[20.0, 10.0])
     assert e.value.code == "invalid_param_type" and len(app.model.properties) == 0
 
@@ -188,13 +188,13 @@ def test_PRP_T01_04_layup(app):
     layers = [{"thickness": 0.2, "material": m.id}, {"thickness": 0.3, "material": m.id}]
     p.set_layup(layers=layers)
     assert p.props["layers"] == layers and p.validate() == []
-    with pytest.raises(OfepError) as e:  # 층 안의 참조도 삭제를 막는다
+    with pytest.raises(Nasa95Error) as e:  # 층 안의 참조도 삭제를 막는다
         m.delete()
     assert e.value.code == "referenced"
-    with pytest.raises(OfepError) as e:  # 층에 필수 속성이 없음
+    with pytest.raises(Nasa95Error) as e:  # 층에 필수 속성이 없음
         p.set_layup(layers=[{"thickness": 0.2}])
     assert e.value.code == "missing_param"
-    with pytest.raises(OfepError) as e:  # 적층이 아닌 프로퍼티에는 쓸 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 적층이 아닌 프로퍼티에는 쓸 수 없다
         app.model.properties.create_solid(material=m.id).set_layup(layers=layers)
     assert e.value.code == "unknown_param"
 
@@ -208,7 +208,7 @@ def test_PRP_T01_12_13_assign(app):
     p.assign(target={"type": "elements", "ids": [1, 2]})
     p.assign(target={"type": "elements", "ids": [2, 3]})
     assert p.props["target"] == {"type": "elements", "ids": [1, 2, 3]}
-    with pytest.raises(OfepError) as e:  # 다른 종류의 대상과 섞을 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 다른 종류의 대상과 섞을 수 없다
         p.assign(target={"type": "set", "ids": [app.model.sets.create_element(name="E", ids=[1]).id]})
     assert e.value.code == "invalid_state"
     p.unassign(target={"type": "elements", "ids": [1, 2, 3]})
@@ -222,7 +222,7 @@ def test_PRP_T02_nodal_thickness(app):
     p = app.model.properties.create_shell(material=steel(app).id, thickness=2.0)
     p.set_nodal_thickness(values=[[1, 2.0], [2, 1.5]])
     assert p.props["nodal_thickness"] is True and p.props["nodal_thickness_values"] == [[1, 2.0], [2, 1.5]]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         p.set_nodal_thickness(values=[[1, 0.0]])
     assert e.value.code == "out_of_range"
 
@@ -233,13 +233,13 @@ def test_SYS_13_03_04_05_functions(app, tmp_path):
     t = app.model.functions.create_table(points=[[0.0, 0.0], [1.0, 10.0], [3.0, 30.0]])
     assert app.execute("function.evaluate", id=t.id, x=[0.0, 0.5, 1.0, 2.0, 9.0])["values"] == pytest.approx(
         [0.0, 5.0, 10.0, 20.0, 30.0])
-    with pytest.raises(OfepError) as e:  # x 가 오름차순이 아님
+    with pytest.raises(Nasa95Error) as e:  # x 가 오름차순이 아님
         app.model.functions.create_table(points=[[1.0, 0.0], [0.0, 1.0]])
     assert e.value.code == "invalid_order"
     f = app.model.functions.create_expression(expression="2*x^2 + sin(pi/2) - y")
     assert app.execute("function.evaluate", id=f.id, x=[0.0, 3.0], y=1.0)["values"] == pytest.approx([0.0, 18.0])
     bad = app.model.functions.create_expression(expression="2*(x")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("function.evaluate", id=bad.id, x=[1.0])
     assert e.value.code == "invalid_expression"
     csv = tmp_path / "curve.csv"
@@ -259,18 +259,18 @@ def test_SYS_13_06_07_sets(app):
         r = app.execute("set.boolean", a=a.id, b=b.id, operation=op, name=f"R-{op}")
         assert app.execute("set.members", id=r["id"])["members"] == expect
     e_set = app.model.sets.create_element(name="E", ids=[1])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("set.boolean", a=a.id, b=e_set.id, operation="union")
     assert e.value.code == "invalid_state"
     surf = app.model.sets.create_surface(name="S", faces=[[1, 1]])
     surf.add(members=[[2, 3]])
     assert surf.props["faces"] == [[1, 1], [2, 3]]
-    with pytest.raises(OfepError):  # 면 셋에 노드 번호를 넣을 수 없다
+    with pytest.raises(Nasa95Error):  # 면 셋에 노드 번호를 넣을 수 없다
         surf.add(members=[5])
     # 셋을 적용 대상으로 쓰면 그 셋은 지울 수 없다
     load = app.model.cases.create().steps.create_static().loads.create_force(
         target={"type": "set", "ids": [a.id]}, components=[1.0, 0.0, 0.0])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         a.delete()
     assert e.value.code == "referenced" and e.value.details["references"][0]["id"] == load.id
 
@@ -286,7 +286,7 @@ def test_GEO_T15_10_11_parameters(app):
     app.undo()
     assert depth.props["value"] == pytest.approx(5.0) and H.props["value"] == 10.0
     before = total(app)
-    with pytest.raises(OfepError) as e:  # 서로를 참조하는 수식
+    with pytest.raises(Nasa95Error) as e:  # 서로를 참조하는 수식
         app.execute("parameter.set", id=H.id, expression="depth + 1")
     assert e.value.code == "cyclic_dependency" and total(app) == before
 
@@ -297,7 +297,7 @@ def test_SYS_12_01_07_unit_and_constants(app):
     assert app.execute("unit.get")["system"] == "mm-t-s"
     app.execute("unit.set", system="m-kg-s")
     assert app.execute("unit.get")["system"] == "m-kg-s"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("unit.set", system="furlong-stone-fortnight")
     assert e.value.code == "out_of_range"
     app.undo()
@@ -381,7 +381,7 @@ def test_CAS_T01_07_12_load_combination(app):
     # 계수를 곱할 수 없는 하중(각속도는 선형이 아니다)
     b.loads.create_centrifugal(target={"type": "elements", "ids": [1]}, omega=10.0,
                                axis_point=[0, 0, 0], axis_direction=[0, 0, 1])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("step.load_combination", id=c.id, terms=[{"step": b.id, "factor": 2.0}])
     assert e.value.code == "not_scalable" and total(app) != before and len(c.loads) == 0
 
@@ -513,7 +513,7 @@ def test_BC_T02_07_swap_and_method(app):
     assert pair.props["slave"] == master and pair.props["master"] == slave
     node_pair = app.model.contact_pairs.create(slave=NODES, master=master, interaction=cp.id)
     before = total(app)
-    with pytest.raises(OfepError) as e:  # 주 면은 요소면이어야 한다
+    with pytest.raises(Nasa95Error) as e:  # 주 면은 요소면이어야 한다
         node_pair.swap()
     assert e.value.code == "out_of_range" and total(app) == before
     case = app.model.cases.create()
@@ -532,10 +532,10 @@ def test_CAS_T09_05_06_case_links(app):
     assert dep["order"] == [a.id, b.id, c.id]
     assert {(e["case"], e["needs"]) for e in dep["edges"]} == {(b.id, a.id), (c.id, b.id)}
     before = total(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.link", id=a.id, source=c.id)
     assert e.value.code == "cyclic_dependency" and total(app) == before
-    with pytest.raises(OfepError) as e:  # 연결된 케이스는 지울 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 연결된 케이스는 지울 수 없다
         a.delete()
     assert e.value.code == "referenced"
 
@@ -549,14 +549,14 @@ def test_CAS_T08_03_04_optimization_definition(app):
     app.execute("optimization.add_response", id=sens.id, name="mass", type="MASS")
     app.execute("optimization.add_response", id=sens.id, name="disp", type="ALL-DISP", target=NODES)
     assert [r["name"] for r in sens.props["design_responses"]] == ["mass", "disp"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("optimization.add_response", id=sens.id, name="x")
     assert e.value.code == "missing_param"
     fd = case.steps.create_feasible_direction()
     app.execute("optimization.set_objective", id=fd.id, objective="mass", objective_target="min")
     app.execute("optimization.add_constraint", id=fd.id, response="disp", relation="le", relative_value=1.1)
     assert fd.props["constraints"] == [{"response": "disp", "relation": "le", "relative_value": 1.1}]
-    with pytest.raises(OfepError) as e:  # 민감도 스텝이 아닌 스텝에는 설계 응답을 둘 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 민감도 스텝이 아닌 스텝에는 설계 응답을 둘 수 없다
         app.execute("optimization.add_response", id=fd.id, name="m", type="MASS")
     assert e.value.code == "unknown_param"
 
@@ -577,7 +577,7 @@ def test_SYS_07_01_02_macro(app, tmp_path):
     other = App()
     other.execute("script.run", path=str(path))
     assert total(other) == total(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("macro.record_stop")
     assert e.value.code == "invalid_state"
 
@@ -586,7 +586,7 @@ def test_SYS_07_01_02_macro(app, tmp_path):
 def test_SYS_07_03_script_error(app):
     before, hist = total(app), history_len(app)
     code = "app.execute('material.create', name='a')\napp.execute('material.create', name='b')\nraise ValueError('중단')\n"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("script.run", code=code)
     assert e.value.code == "script_error" and e.value.details["line"] == 3
     # 오류 전까지의 변경은 남고, 하나씩 되돌릴 수 있다
@@ -597,7 +597,7 @@ def test_SYS_07_03_script_error(app):
     # 스크립트에서 묶음을 쓰면 한 단계가 된다
     app.execute("script.run", code="with app.transaction('세 재료'):\n    for n in 'xyz':\n        app.execute('material.create', name=n)\n")
     assert len(app.model.materials) == 3 and history_len(app) == hist + 1
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("script.run", path="없는 파일.py")
     assert e.value.code == "io_error"
 
@@ -618,22 +618,22 @@ def test_SYS_14_03_08_10_registered_command(app):
     assert history_len(app) == hist + 1  # 안의 명령 두 개가 한 단계
     app.undo()
     assert total(app) == before
-    with pytest.raises(OfepError) as e:  # 입력 검증은 등록한 명령에도 적용된다
+    with pytest.raises(Nasa95Error) as e:  # 입력 검증은 등록한 명령에도 적용된다
         app.execute("ext.make_pair")
     assert e.value.code == "missing_param"
     # 안에서 실패하면 전부 되돌린다
     app.execute("material.create", name="y-b")
     before = total(app)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("ext.make_pair", prefix="y")
     assert e.value.code == "name_conflict" and total(app) == before
     # 이름 충돌과 등록 해제
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.register_command("material.create", make_pair, desc="x")
     assert e.value.code == "name_conflict"
     app.unregister_command("ext.make_pair")
     assert "ext.make_pair" not in {c["name"] for c in app.commands()}
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.unregister_command("material.create")  # 내장 명령은 해제할 수 없다
 
 
@@ -662,7 +662,7 @@ def test_SYS_12_06_09_import_units(app, tmp_path, monkeypatch):
     app.execute("project.new")
     r = app.execute("mesh.import", path=str(deck), unit_system="m-kg-s", scale=0.5)  # 둘 다 주면 곱한다
     assert r["scale"] == pytest.approx(500.0) and app.execute("mesh.nodes", ids=[2])["coords"] == [[250.0, 0.0, 0.0]]
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("mesh.import", path=str(deck), unit_system="furlong")
     # inch 형상 → mm: 25.4 배(STEP 왕복)
     if app.execute("app.version").get("geometry"):
@@ -678,7 +678,7 @@ def test_SYS_12_06_09_import_units(app, tmp_path, monkeypatch):
     # 결과 파일의 단위(SYS-12-09): m-kg-s 로 푼 결과를 mm-t-s 모델에서 단위 지정해 열면 변위 ×1000, 응력 ×1e-6
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     app.execute("project.new")
     app.execute("unit.set", system="m-kg-s")
     mat = app.model.materials.create(name="STEEL")
@@ -733,6 +733,6 @@ def test_MAT_T01_25_builtin_material_db_and_units(app):
     rows = {r["name"]: r for r in app.execute("material.library_list")}
     assert rows["Steel S235JR"]["E"] == pytest.approx(210e9) and rows["Steel S235JR"]["density"] == 7850
     assert app.execute("unit.symbols")["pressure"] == "Pa" and app.execute("unit.symbols")["density"] == "kg/m³"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("material.library_import", names=["Unobtainium"])
     assert e.value.code == "not_found"

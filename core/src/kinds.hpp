@@ -3,9 +3,9 @@
 #include <string>
 #include <vector>
 
-#include "ofep/schema.hpp"
+#include "nasa95/schema.hpp"
 
-namespace ofep::kinds {
+namespace nasa95::kinds {
 
 using F = FieldSpec;
 
@@ -47,4 +47,4 @@ void register_property(Schema& s);   // 프로퍼티·구속·접촉
 void register_load(Schema& s);       // 초기 조건·하중·경계조건·스텝 중 변경·출력 요청
 void register_case(Schema& s);       // 해석 케이스·스텝
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds

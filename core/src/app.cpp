@@ -1,15 +1,15 @@
-#include "ofep/app.hpp"
-#include "ofep/geometry.hpp"
-#include "ofep/mesher.hpp"
-#include "ofep/results.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/geometry.hpp"
+#include "nasa95/mesher.hpp"
+#include "nasa95/results.hpp"
 
 #include <algorithm>
 #include <filesystem>
 #include <set>
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 // UTF-8 경로 → 파일 시스템 경로(Windows 에서 한글 경로가 깨지지 않게)
@@ -28,6 +28,7 @@ App::App() {
   register_builtin_kinds(schema_);
   register_object_commands(*this);
   register_material_commands(*this);
+  register_section_commands(*this);
   register_system_commands(*this);
   register_model_commands(*this);
   register_mesh_commands(*this);
@@ -488,7 +489,7 @@ void App::macro_start() {
 
 std::string App::macro_stop() {
   macro_on_ = false;
-  std::string code = "# open-fep 매크로. `app` 은 openfep.App 객체다.\n";
+  std::string code = "# NASA-95 매크로. `app` 은 nasa95.App 객체다.\n";
   for (const std::string& line : macro_lines_) code += line + "\n";
   macro_lines_.clear();
   return code;
@@ -583,4 +584,4 @@ void App::emit(const ChangeSet& cs, const MeshLog& mesh, bool inverse, const std
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

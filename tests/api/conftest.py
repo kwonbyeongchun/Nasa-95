@@ -19,10 +19,10 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "python"))
 
-from openfep import App  # noqa: E402
+from nasa95 import App  # noqa: E402
 
 # 설계 문서(작업 폴더). 환경 변수로 바꿀 수 있다.
-WORKS = Path(os.environ.get("OFEP_WORKS", ROOT.parent / "open-fep-works"))
+WORKS = Path(os.environ.get("NASA95_WORKS", ROOT.parent / "open-fep-works"))
 API_FULL_LIST = WORKS / ".agent" / "proj-api-full-list.md"
 
 NODES = {"type": "nodes", "ids": [1]}

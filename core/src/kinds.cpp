@@ -2,7 +2,7 @@
 // 형상·메시·결과에 딸린 종류(파트, 피처, 스케치, 메시 파트, 결과 파일 …)는 그 영역을 구현할 때 추가한다.
 #include "kinds.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 void register_builtin_kinds(Schema& s) {
   kinds::register_geometry(s);  // 파트·피처
@@ -13,4 +13,4 @@ void register_builtin_kinds(Schema& s) {
   kinds::register_load(s);
 }
 
-}  // namespace ofep
+}  // namespace nasa95

@@ -2,7 +2,7 @@
 //
 // 구성: 메시 → 셋 → 방향·재료·섹션 → 함수(*AMPLITUDE)·출력 시점 → 구속·접촉 → 초기 조건 → 스텝.
 // 적용 대상(노드·요소·면의 목록)은 이름 붙은 셋으로 바꿔 쓴다. 사용자가 만든 셋 하나를 그대로 가리키면 그 이름을 쓰고,
-// 그 밖에는 내부 셋(OFEP_N1, OFEP_E1, OFEP_S1 …)을 만든다. 내부 셋은 쓰는 곳보다 앞에 모아 적는다.
+// 그 밖에는 내부 셋(NASA95_N1, NASA95_E1, NASA95_S1 …)을 만든다. 내부 셋은 쓰는 곳보다 앞에 모아 적는다.
 // 덱에 쓰지 못한 객체는 조용히 빠뜨리지 않고 skipped 에 알리고, 덱에도 주석으로 남긴다.
 #include <algorithm>
 #include <array>
@@ -14,11 +14,12 @@
 #include <set>
 #include <sstream>
 
-#include "ofep/deck.hpp"
-#include "ofep/error.hpp"
-#include "ofep/expr.hpp"
+#include "nasa95/deck.hpp"
+#include "nasa95/solver.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/expr.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -52,6 +53,7 @@ class Deck {
 
   DeckResult run() {
     extra_node_ = m_.max_node_id();
+    extra_elem_ = m_.max_element_id();
     select_scope();
     write_mesh();
     write_user_sets();
@@ -70,7 +72,7 @@ class Deck {
     }
     DeckResult r;
     std::ostringstream out;
-    out << "** open-fep " << App::version() << " - CalculiX input deck\n";
+    out << "** NASA-95 " << App::version() << " - CalculiX input deck\n";
     if (case_ && options_.restart_from_step <= 0) {  // 재시작 덱은 *RESTART, READ 가 첫 카드여야 한다
       out << "*HEADING\n";
       const bool ascii = std::all_of(case_->name.begin(), case_->name.end(), [](unsigned char c) { return c >= 32 && c < 127; });
@@ -289,8 +291,8 @@ class Deck {
   std::string internal(const char* prefix, const std::string& key, const std::function<void(std::ostream&, const std::string&)>& write) {
     auto it = internal_.find(key);
     if (it != internal_.end()) return it->second;
-    // 사용자 셋과 겹치지 않는 이름을 고른다(가져온 덱에는 OFEP_ 로 시작하는 셋이 있을 수 있다).
-    const std::string space = std::string(prefix) == "OFEP_N" ? "NSET|" : std::string(prefix) == "OFEP_E" ? "ELSET|" : "SURFACE|";
+    // 사용자 셋과 겹치지 않는 이름을 고른다(가져온 덱에는 NASA95_ 로 시작하는 셋이 있을 수 있다).
+    const std::string space = std::string(prefix) == "NASA95_N" ? "NSET|" : std::string(prefix) == "NASA95_E" ? "ELSET|" : "SURFACE|";
     std::string name;
     do name = std::string(prefix) + std::to_string(++counter_[prefix]);
     while (names_.count(space + name));
@@ -301,14 +303,14 @@ class Deck {
   }
   std::string nset_of(const std::vector<Id>& ids) {
     if (ids.empty()) throw Error("invalid_state", "대상에 노드가 없습니다");
-    return internal("OFEP_N", "N" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
+    return internal("NASA95_N", "N" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
       os << "*NSET, NSET=" << name << "\n";
       write_ids(os, ids);
     });
   }
   std::string elset_of(const std::vector<Id>& ids) {
     if (ids.empty()) throw Error("invalid_state", "대상에 요소가 없습니다");
-    return internal("OFEP_E", "E" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
+    return internal("NASA95_E", "E" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
       os << "*ELSET, ELSET=" << name << "\n";
       write_ids(os, ids);
     });
@@ -351,7 +353,7 @@ class Deck {
       if (type == "nodes" || (s && (subtype_of(*s) == "node" || subtype_of(*s) == "node_surface"))) {
         const std::vector<Id> ids = nodes_of(target);
         if (ids.empty()) throw Error("invalid_state", "대상에 노드가 없습니다");
-        return internal("OFEP_S", "SN" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
+        return internal("NASA95_S", "SN" + Json(ids).dump(), [&](std::ostream& os, const std::string& name) {
           os << "*SURFACE, NAME=" << name << ", TYPE=NODE\n";
           for (Id n : ids) os << n << "\n";
         });
@@ -361,7 +363,7 @@ class Deck {
     if (faces.empty()) throw Error("invalid_state", "대상에 면이 없습니다");
     Json key = Json::array();
     for (const auto& [e, f] : faces) key.push_back(Json::array({e, f}));
-    return internal("OFEP_S", "SF" + key.dump(), [&](std::ostream& os, const std::string& name) {
+    return internal("NASA95_S", "SF" + key.dump(), [&](std::ostream& os, const std::string& name) {
       os << "*SURFACE, NAME=" << name << ", TYPE=ELEMENT\n";
       for (const auto& [e, f] : faces) os << e << ", S" << face_label(e, f) << "\n";
     });
@@ -622,6 +624,106 @@ class Deck {
     if (sp->depvar && !has_depvar) os << "*DEPVAR\n" << sp->depvar << "\n";
   }
 
+  // 합성보(PRP-05, D15): 형강(I·T·L·C)은 CalculiX 에 없으므로 직사각형 부분 단면마다 같은 노드의 요소 사본을 두고
+  // OFFSET 으로 자리를 잡는다(매뉴얼 7.3 "composite beams", 배포본 예제 beamcom). 첫 부분은 원래 요소, 나머지는 새 번호의 사본이며
+  // 사본은 메시 파트의 ELSET 에 더해 파트 단위 하중(중력 등)을 같이 받는다. 솔버로 확인(2026-10-05): OFFSET=o 이면 부분 단면의 축이
+  // 기준선에서 -o × 두께 만큼 떨어진다(OFFSET2=0.5 → 기준선이 +2축 쪽 표면).
+  // 합성보용 재료: 솔버로 확인(2026-10-05) — 단면이 다른 보가 노드를 공유하면 매듭(knot: 단면 강체 + 균일 팽창)이 생기고, 오프셋 부분에서는
+  // 포아송 수축을 매듭이 막아 ν=0.3 에서 굽힘 강성이 22~25% 커진다(ν=0 이면 정확). 그래서 등방 선형탄성 재료는 ν=0 공학 상수(E 유지,
+  // G=E/2(1+ν) 유지 → 굽힘·축·전단·비틀림 강성 보존)로 바꾼 파생 재료를 쓴다. 다른 구성 모델(소성 등)은 바꾸지 못하므로 원래 재료 + 경고.
+  std::string composite_material_name(const Object& user, const Object& mat) {
+    auto bit = mat.props.find("behaviors");
+    static const std::set<std::string> harmless = {"elastic", "density", "expansion", "specific_heat", "conductivity", "allowable", "structural_damping"};
+    bool convertible = bit != mat.props.end() && bit->contains("elastic") && (*bit)["elastic"].value("type", std::string("iso")) == "iso";
+    if (convertible)
+      for (auto it = bit->begin(); it != bit->end(); ++it)
+        if (!harmless.count(it.key())) convertible = false;
+    if (!convertible) {
+      warn("composite_beam_poisson", "합성보의 재료 " + mat.name + " 은(는) 등방 선형탄성이 아니라 ν=0 으로 바꾸지 못합니다. 매듭의 포아송 구속으로 굽힘 강성이 20% 안팎 커집니다", user.id);
+      return material_name(user, Json(mat.id));
+    }
+    const std::string name = deck_material_name(mat) + "_NOPOISSON";
+    if (composite_materials_.insert(mat.id).second) {
+      std::ostream& os = model_;
+      os << "*MATERIAL, NAME=" << name << "\n*ELASTIC, TYPE=ENGINEERING CONSTANTS\n";
+      for (const Json& row : (*bit)["elastic"].value("data", Json::array())) {
+        const double E = row[0].get<double>(), nu = row[1].get<double>(), G = E / (2.0 * (1.0 + nu));
+        Json r = Json::array({E, E, E, 0.0, 0.0, 0.0, G, G, G});
+        if (row.size() > 2) r.push_back(row[2]);  // 온도
+        write_row(os, r);
+      }
+      for (const char* n : {"density", "expansion", "specific_heat", "conductivity"}) {
+        auto it = bit->find(n);
+        if (it == bit->end()) continue;
+        if (std::string(n) == "density") os << "*DENSITY\n";
+        else if (std::string(n) == "specific_heat") os << "*SPECIFIC HEAT\n";
+        else {
+          const std::string t = it->value("type", std::string("iso"));
+          std::string up = t;
+          std::transform(up.begin(), up.end(), up.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+          os << (std::string(n) == "expansion" ? "*EXPANSION" : "*CONDUCTIVITY") << (t == "iso" ? "" : ", TYPE=" + up);
+          if (std::string(n) == "expansion" && has(*it, "zero")) os << ", ZERO=" << num((*it)["zero"]);
+          os << "\n";
+        }
+        write_rows(os, it->value("data", Json::array()));
+      }
+    }
+    return name;
+  }
+
+  using DirGroups = std::map<std::string, std::pair<Json, std::vector<Id>>>;
+  void write_composite_beam(std::ostream& os, const Object& p, const DirGroups& groups, std::string material, const Object* mat) {
+    const Json& q = p.props;
+    if (mat && material_written_.count(mat->id)) material = ", MATERIAL=" + composite_material_name(p, *mat);
+    const std::string sec = q["section"].get<std::string>();
+    const std::vector<double> dims = q["dimensions"].get<std::vector<double>>();
+    const std::vector<BeamRect> rects = beam_section_rects(sec, dims);
+    const auto [H, B] = beam_section_extent(sec, dims);
+    const double o1 = q.value("offset1", 0.0), o2 = q.value("offset2", 0.0);
+    std::size_t copies = 0;
+    for (const auto& [key, g] : groups) copies += g.second.size() * (rects.size() - 1);
+    warn("composite_beam", "형강 단면(" + sec + ")은 합성보로 나갑니다: 부분 단면 " + std::to_string(rects.size()) + "개, 요소 사본 " + std::to_string(copies) +
+                               "개(번호 " + std::to_string(extra_elem_ + 1) + "부터). 노드 단면력은 부분 평균이므로 합력은 반력으로 확인하십시오: " + p.name, p.id);
+    for (const auto& [key, g] : groups) {
+      const Json dir = g.first.is_null() ? Json::array({0.0, 0.0, -1.0}) : g.first;
+      for (std::size_t k = 0; k < rects.size(); ++k) {
+        const BeamRect& r = rects[k];
+        std::vector<Id> ids;
+        if (k == 0) {
+          ids = g.second;
+        } else {
+          std::vector<std::pair<std::string, Id>> order;
+          std::map<std::pair<std::string, Id>, std::vector<std::pair<Id, std::size_t>>> by;  // (타입, 파트) → [(새 번호, 원래 위치)]
+          for (Id e : g.second) {
+            const std::ptrdiff_t i = m_.find_element(e);
+            if (i < 0) continue;
+            const Id copy = ++extra_elem_;
+            ids.push_back(copy);
+            const std::pair<std::string, Id> bk{type_of_[e], m_.part_at(static_cast<std::size_t>(i))};
+            if (!by.count(bk)) order.push_back(bk);
+            by[bk].push_back({copy, static_cast<std::size_t>(i)});
+          }
+          for (const auto& bk : order) {
+            mesh_ << "*ELEMENT, TYPE=" << bk.first;
+            if (bk.second && a_.model().find(bk.second)) mesh_ << ", ELSET=" << a_.model().get(bk.second).name;
+            mesh_ << "\n";
+            for (const auto& [copy, i] : by[bk]) {
+              mesh_ << copy;
+              const Id* n = m_.nodes_at(i);
+              for (std::size_t c = 0; c < m_.node_count_at(i); ++c) mesh_ << ((c + 1) % 16 == 0 ? ",\n" : ", ") << n[c];
+              mesh_ << "\n";
+            }
+          }
+        }
+        if (ids.empty()) continue;
+        os << "*BEAM SECTION, ELSET=" << elset_of(ids) << material << ", SECTION=RECT" << orientation_param(p, mat, false)
+           << ", OFFSET1=" << num((o1 * H - r.c1) / r.t1) << ", OFFSET2=" << num((o2 * B - r.c2) / r.t2) << "\n";
+        os << num(r.t1) << ", " << num(r.t2) << "\n";
+        write_row(os, dir);
+      }
+    }
+  }
+
   void write_sections() {
     std::ostream& os = model_;
     const Object* settings = a_.find_settings();
@@ -681,9 +783,15 @@ class Deck {
           }
           static const std::map<std::string, const char*> section = {
               {"rect", "RECT"}, {"circ", "CIRC"}, {"pipe", "PIPE"}, {"box", "BOX"}, {"general", "GENERAL"}};
+          const std::string sec = q["section"].get<std::string>();
+          if (beam_section_composite(sec)) {
+            write_composite_beam(os, *p, groups, material, mat);
+            covered.insert(ids.begin(), ids.end());
+            continue;
+          }
           for (const auto& [key, g] : groups) {
             os << "*BEAM SECTION, ELSET=" << (groups.size() == 1 ? set : elset_of(g.second)) << material
-               << ", SECTION=" << section.at(q["section"].get<std::string>()) << orientation_param(*p, mat, false);
+               << ", SECTION=" << section.at(sec) << orientation_param(*p, mat, false);
             if (has(q, "offset1")) os << ", OFFSET1=" << num(q["offset1"]);
             if (has(q, "offset2")) os << ", OFFSET2=" << num(q["offset2"]);
             os << "\n";
@@ -1602,7 +1710,7 @@ class Deck {
         const std::string surf = surface(q["target"]);
         const Id ref = ++extra_node_;
         mesh_ << "*NODE\n" << ref << ", " << num(q["point"][0]) << ", " << num(q["point"][1]) << ", " << num(q["point"][2]) << "\n";
-        model_ << "*COUPLING, REF NODE=" << ref << ", SURFACE=" << surf << ", CONSTRAINT NAME=OFEP_RF" << load.id << "\n*DISTRIBUTING\n1, 6\n";
+        model_ << "*COUPLING, REF NODE=" << ref << ", SURFACE=" << surf << ", CONSTRAINT NAME=NASA95_RF" << load.id << "\n*DISTRIBUTING\n1, 6\n";
         head("*CLOAD");
         for (int d = 0; d < 3; ++d) card << ref << ", " << d + 1 << ", " << num(q["force"][static_cast<std::size_t>(d)]) << "\n";
         if (has(q, "moment"))
@@ -1824,6 +1932,8 @@ class Deck {
   DeckOptions options_;
   std::ostringstream mesh_, sets_, model_, steps_;
   Id extra_node_ = 0;  // 덱에만 더하는 노드(원격 하중의 기준 노드): 메시의 가장 큰 번호 다음부터
+  Id extra_elem_ = 0;  // 덱에만 더하는 요소(합성보의 부분 단면 사본): 메시의 가장 큰 번호 다음부터
+  std::set<Id> composite_materials_;  // ν=0 파생 재료를 이미 쓴 재료
   Json warnings_ = Json::array(), skipped_ = Json::array();
 
   bool scoped_ = false;
@@ -1845,9 +1955,13 @@ class Deck {
 
 }  // namespace
 
+std::string case_solver(const Object& analysis_case) { return analysis_case.props.value("solver", std::string("calculix")); }
+
+DeckResult write_calculix_deck(const App& app, const Object& analysis_case, const DeckOptions& options) { return Deck(app, &analysis_case, options).run(); }
+
 DeckResult write_deck(const App& app, const Object& analysis_case, const DeckOptions& options) {
-  return Deck(app, &analysis_case, options).run();
+  return solver_spec(case_solver(analysis_case)).write(app, analysis_case, options);  // 솔버 백엔드 등록부(solver.hpp)
 }
 DeckResult write_mesh_deck(const App& app) { return Deck(app, nullptr).run(); }
 
-}  // namespace ofep
+}  // namespace nasa95

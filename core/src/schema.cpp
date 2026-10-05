@@ -1,10 +1,10 @@
-#include "ofep/schema.hpp"
+#include "nasa95/schema.hpp"
 
 #include <algorithm>
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 Json FieldSpec::to_json() const {
   Json j{{"name", name}, {"type", type}, {"desc", desc}, {"required", required}, {"must", must}};
@@ -314,4 +314,4 @@ void for_each_soft_violation(const Fields& fields, const Json& props, const std:
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

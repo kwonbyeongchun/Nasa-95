@@ -13,10 +13,10 @@
 
 #include "geometry_occt.hpp"
 #include "sketch_solver.hpp"
-#include "ofep/error.hpp"
-#include "ofep/geometry.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/geometry.hpp"
 
-#ifdef OFEP_WITH_OCCT
+#ifdef NASA95_WITH_OCCT
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
@@ -136,7 +136,7 @@
 #include <gp_Trsf.hxx>
 #endif
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -159,7 +159,7 @@ const Object& part_of(const App& a, const Json& p) {
 
 }  // namespace
 
-#ifdef OFEP_WITH_OCCT
+#ifdef NASA95_WITH_OCCT
 
 bool geometry_available() { return true; }
 
@@ -3479,4 +3479,4 @@ void register_geometry_commands(App&) {}
 
 #endif
 
-}  // namespace ofep
+}  // namespace nasa95

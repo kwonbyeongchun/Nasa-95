@@ -11,16 +11,18 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "ofep/error.hpp"
-#include "ofep/geometry.hpp"
-#include "ofep/render.hpp"
-#include "ofep/results.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/geometry.hpp"
+#include "nasa95/render.hpp"
+#include "nasa95/results.hpp"
 #include "navigation_cube.hpp"
+#include "load_arrow.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 constexpr double kPi = 3.14159265358979323846;
 
@@ -153,7 +155,7 @@ struct Bounds {
     for (std::size_t k = 0; k < 3; ++k) lo[k] = std::min(lo[k], p[k]), hi[k] = std::max(hi[k], p[k]);
   }
   bool empty() const { return lo[0] > hi[0]; }
-  V3 center() const { return mul(ofep::add(lo, hi), 0.5); }
+  V3 center() const { return mul(nasa95::add(lo, hi), 0.5); }
   double radius() const { return empty() ? 1.0 : std::max(0.5 * norm(sub(hi, lo)), 1e-12); }
 };
 
@@ -189,9 +191,23 @@ RenderVertex vertex(const V3& p, const V3& n, const std::array<std::uint8_t, 3>&
   return v;
 }
 
+// 구속 표시(BC-13, RND-34): 구속 하나마다 적용 영역 색칠과 이름표 하나. 축 기호는 고른 구속에만 그린다.
+// 장면을 만들 때 모으고, 그리는 것은 프레임마다 한다(화면 고정 크기·선택 연동이라 카메라와 선택에 따라 달라진다).
+struct BcMark {
+  Id id = 0, set = 0;                  // 구속과 그 구속 셋
+  std::string text;                    // 이름표: FIX, UXYZ, UX RZ, SYM X, T=20 …
+  std::vector<int> dofs;               // 축 기호로 그릴 자유도(1~3 병진, 4~6 회전)
+  std::array<std::uint8_t, 3> color{};
+  V3 anchor{};                         // 이름표 자리(대상의 가운데에 가장 가까운 노드)
+  std::vector<V3> points;              // 축 기호 자리(솎은 노드)
+  std::vector<V3> nodes;               // 면으로 칠할 수 없는 대상(점·선)의 노드 표식
+  std::vector<std::size_t> triangles;  // 색칠할 삼각형(scene.triangles 안의 첫 정점 위치)
+};
+
 struct Built {
   RenderScene scene;
   Bounds bounds;
+  std::vector<BcMark> bc_marks;
   std::vector<PickRecord> picks;
   std::unordered_map<Id, V3> node_pos;  // 그린 노드 위치(변형 표시면 옮긴 자리) — 표식·영역 선택에 쓴다
   Json legend = nullptr;
@@ -205,36 +221,56 @@ struct KeyHash {
   }
 };
 
-// 하중·경계조건 심볼(RND-34): 힘·모멘트·압력·중력은 화살표, 변위 구속은 자유도 방향의 짧은 막대. 선으로 그린다.
+std::string format_value(double v);
+
+// 구속된 자유도의 이름표: 전부면 FIX, 아니면 병진 U·회전 R 뒤에 축(UXYZ, UX RZ)
+std::string dof_text(const std::set<int>& dofs) {
+  if (dofs.size() == 6) return "FIX";
+  std::string u, r;
+  for (int k = 1; k <= 3; ++k) {
+    if (dofs.count(k)) u += "XYZ"[k - 1];
+    if (dofs.count(k + 3)) r += "XYZ"[k - 1];
+  }
+  std::string s = u.empty() ? "" : "U" + u;
+  if (!r.empty()) s += (s.empty() ? "R" : " R") + r;
+  return s;
+}
+
+// 하중·경계조건 심볼(RND-34): 하중은 원통·원뿔 화살표. 구속은 적용 영역 색칠·이름표·축 기호(BcMark)로 모은다.
 void add_symbols(App& a, const ViewState& vs, Built& b) {
   const Mesh& m = a.mesh();
   const Id step = vs.symbols.value("step", 0);
-  if (!step || !a.model().find(step)) return;
+  const bool by_sets = vs.symbols.contains("sets") && vs.symbols["sets"].is_array();  // 하중 셋·구속 셋을 바로 그린다(스텝 없이)
+  if (!by_sets && (!step || !a.model().find(step))) return;
   const double size = vs.symbols.value("size", 0.0) > 0 ? vs.symbols.value("size", 0.0) : 0.06 * b.bounds.radius();
-  auto colored_line = [&](const V3& p, const V3& q, const std::array<std::uint8_t, 3>& c) {
-    b.scene.lines.push_back(vertex(p, {0, 0, 0}, c, 0));
-    b.scene.lines.push_back(vertex(q, {0, 0, 0}, c, 0));
-  };
   auto arrow = [&](const V3& tip, const V3& dir_unit, double length, const std::array<std::uint8_t, 3>& c) {
-    // 끝이 tip 에 닿는 화살표(하중은 노드를 향해 민다)
-    const V3 tail = sub(tip, mul(dir_unit, length));
-    colored_line(tail, tip, c);
-    V3 side = cross(dir_unit, std::fabs(dir_unit[2]) < 0.9 ? V3{0, 0, 1} : V3{1, 0, 0});
-    side = unit(side);
-    const V3 back = sub(tip, mul(dir_unit, 0.25 * length));
-    colored_line(tip, add(back, mul(side, 0.12 * length)), c);
-    colored_line(tip, sub(back, mul(side, 0.12 * length)), c);
+    render_detail::add_load_arrow(b.scene, tip, dir_unit, length, c);
   };
-  const std::array<std::uint8_t, 3> load_color{200, 30, 30}, bc_color{30, 110, 200};
-  // 스텝에서 유효한 것(승계 포함)
-  Json effective;
-  try {
-    effective = a.commands().at("step.effective").fn(a, Json{{"id", step}});
-  } catch (const Error&) {
-    return;
+  const std::array<std::uint8_t, 3> load_color{200, 30, 30};
+  // 구속마다 다른 색(하중의 빨강·강조의 주황은 피한다)
+  static const std::array<std::array<std::uint8_t, 3>, 6> palette = {
+      {{30, 110, 200}, {0, 150, 136}, {142, 68, 173}, {39, 174, 96}, {200, 60, 140}, {150, 105, 60}}};
+  std::unordered_map<std::uint32_t, std::vector<std::size_t>> pick_marks;  // 픽 번호 → 그 면을 칠할 구속
+  // 스텝에서 유효한 것(승계 포함), 또는 지정한 셋의 항목. 숨긴 셋(view.hide 의 load_set·bc_set)의 항목은 그리지 않는다
+  Json effective{{"loads", Json::array()}, {"bcs", Json::array()}};
+  if (by_sets) {
+    for (const Json& sid : vs.symbols["sets"]) {
+      const Object* set = a.model().find(sid.get<Id>());
+      if (!set || set->suppressed || (set->kind != "load_set" && set->kind != "bc_set")) continue;
+      for (const Object* o : a.model().children(set->id, set->kind == "load_set" ? "load" : "bc"))
+        if (!o->suppressed) effective[set->kind == "load_set" ? "loads" : "bcs"].push_back(Json{{"id", o->id}});
+    }
+  } else {
+    try {
+      effective = a.commands().at("step.effective").fn(a, Json{{"id", step}});
+    } catch (const Error&) {
+      return;
+    }
   }
+  auto set_hidden = [&](const Object& o) { return vs.hidden.count(o.parent) > 0; };
   for (const Json& entry : effective["loads"]) {
     const Object& l = a.model().get(entry["id"].get<Id>());
+    if (set_hidden(l)) continue;
     const Json& q = l.props;
     const std::string t = subtype_of(l);
     if (!has(q, "target")) continue;
@@ -276,38 +312,93 @@ void add_symbols(App& a, const ViewState& vs, Built& b) {
   }
   for (const Json& entry : effective["bcs"]) {
     const Object& bc = a.model().get(entry["id"].get<Id>());
+    if (set_hidden(bc)) continue;
     const Json& q = bc.props;
     const std::string t = subtype_of(bc);
     if (!has(q, "target")) continue;
-    std::vector<int> dofs;
-    if ((t == "displacement" || t == "fixed_current") && has(q, "dofs"))
-      for (const Json& d : q["dofs"]) dofs.push_back(d.get<int>());
-    else if (t == "symmetry" || t == "antisymmetry" || t == "temperature")
-      dofs = {0};
-    else
+    BcMark mark;
+    mark.id = bc.id, mark.set = bc.parent;
+    std::set<int> dofs;
+    if ((t == "displacement" || t == "fixed_current") && has(q, "dofs")) {
+      for (const Json& d : q["dofs"])
+        if (d.get<int>() >= 1 && d.get<int>() <= 6) dofs.insert(d.get<int>());
+      if (dofs.empty()) continue;
+      bool moving = false;  // 0 이 아닌 값을 주는 구속(강제 변위)
+      if (t == "displacement" && has(q, "values"))
+        for (const Json& v : q["values"]) moving = moving || (v.is_number() && v.get<double>() != 0.0);
+      mark.text = (t == "fixed_current" ? "HOLD " : moving ? "DISP " : "") + dof_text(dofs);
+    } else if ((t == "symmetry" || t == "antisymmetry") && has(q, "normal")) {
+      // 대칭: 면에 수직인 병진과 면 안의 두 축 회전을 막는다. 반대칭은 그 나머지
+      const int axis = std::clamp(static_cast<int>(q["normal"].get<std::string>().at(0) - 'x'), 0, 2);
+      const int o1 = (axis + 1) % 3, o2 = (axis + 2) % 3;
+      dofs = t == "symmetry" ? std::set<int>{axis + 1, o1 + 4, o2 + 4} : std::set<int>{o1 + 1, o2 + 1, axis + 4};
+      mark.text = std::string(t == "symmetry" ? "SYM " : "ASYM ") + "XYZ"[axis];
+    } else if (t == "temperature") {
+      mark.text = has(q, "value") && q["value"].is_number() ? "T=" + format_value(q["value"].get<double>()) : "TEMP";
+    } else {
       continue;
+    }
+    mark.dofs.assign(dofs.begin(), dofs.end());
+    std::unordered_set<Id> in_target;
+    std::vector<V3> pts;
     try {
-      for (const Json& n : resolve_target(a, q["target"], "nodes")) {
-        const V3 p = m.node(n.get<Id>());
-        if (dofs == std::vector<int>{0}) {  // 축 표시 없이 작은 상자
-          for (int k = 0; k < 3; ++k) {
-            V3 d{0, 0, 0};
-            d[static_cast<std::size_t>(k)] = 0.3 * size;
-            colored_line(sub(p, d), add(p, d), bc_color);
-          }
-          continue;
-        }
-        for (int dof : dofs) {
-          if (dof < 1 || dof > 6) continue;
-          V3 d{0, 0, 0};
-          d[static_cast<std::size_t>((dof - 1) % 3)] = (dof <= 3 ? 0.6 : 0.35) * size;
-          colored_line(sub(p, d), p, bc_color);  // 음의 쪽으로 짧은 막대 = 구속
-          if (dof > 3) colored_line(add(p, d), p, bc_color);
-        }
-      }
+      for (const Json& n : resolve_target(a, q["target"], "nodes"))
+        if (in_target.insert(n.get<Id>()).second) pts.push_back(m.node(n.get<Id>()));
     } catch (const Error&) {
       continue;
     }
+    if (pts.empty()) continue;
+    // 이름표 자리: 대상의 가운데에 가장 가까운 노드. 축 기호 자리: 거기서부터 서로 가장 먼 노드를 차례로 골라 9개까지
+    V3 center{0, 0, 0};
+    for (const V3& p : pts) center = add(center, p);
+    center = mul(center, 1.0 / static_cast<double>(pts.size()));
+    std::size_t first = 0;
+    for (std::size_t i = 1; i < pts.size(); ++i)
+      if (norm(sub(pts[i], center)) < norm(sub(pts[first], center))) first = i;
+    mark.anchor = pts[first];
+    std::vector<double> nearest(pts.size(), 1e300);
+    for (std::size_t pick = first; mark.points.size() < 9;) {
+      mark.points.push_back(pts[pick]);
+      for (std::size_t i = 0; i < pts.size(); ++i) nearest[i] = std::min(nearest[i], norm(sub(pts[i], pts[pick])));
+      const std::size_t far = static_cast<std::size_t>(std::max_element(nearest.begin(), nearest.end()) - nearest.begin());
+      if (nearest[far] <= 0.0) break;  // 남은 노드가 없다
+      pick = far;
+    }
+    // 색칠할 면: 꼭짓점이 모두 대상에 든 요소면(2D 요소는 요소 자체), 형상 표시 중이면 대상으로 준 형상의 면
+    std::set<std::pair<Id, int>> geometry_faces;
+    if (q["target"].value("type", std::string()) == "geometry" && has(q["target"], "ids"))
+      for (const Json& g : q["target"]["ids"])
+        if (g.is_array() && g.size() == 3 && g[1] == "face") geometry_faces.insert({g[0].get<Id>(), g[2].get<int>()});
+    const std::size_t index = b.bc_marks.size();
+    for (std::size_t i = 0; i < b.picks.size(); ++i) {
+      const PickRecord& rec = b.picks[i];
+      bool inside = false;
+      if (rec.kind == "face") {
+        inside = geometry_faces.count({rec.a, rec.b}) > 0;
+      } else if (rec.kind == "element_face" || rec.kind == "element") {
+        const std::ptrdiff_t e = m.find_element(rec.a);
+        if (e < 0) continue;
+        const Shape shape = m.shape_at(static_cast<std::size_t>(e));
+        if (rec.kind == "element" && shape_info(shape).dim != 2) continue;
+        const Id* nodes = m.nodes_at(static_cast<std::size_t>(e));
+        const std::vector<int>& corners = rec.kind == "element" ? corner_positions(shape) : shape_faces(shape)[static_cast<std::size_t>(rec.b - 1)];
+        inside = std::all_of(corners.begin(), corners.end(), [&](int k) { return in_target.count(nodes[k]) > 0; });
+      }
+      if (inside) pick_marks[static_cast<std::uint32_t>(i + 1)].push_back(index);
+    }
+    mark.color = palette[index % palette.size()];
+    mark.nodes = std::move(pts);
+    b.bc_marks.push_back(std::move(mark));
+  }
+  if (!pick_marks.empty())
+    for (std::size_t k = 0; k + 2 < b.scene.triangles.size(); k += 3) {
+      const auto it = pick_marks.find(b.scene.triangles[k].id);
+      if (it == pick_marks.end()) continue;
+      for (std::size_t index : it->second) b.bc_marks[index].triangles.push_back(k);
+    }
+  for (BcMark& mark : b.bc_marks) {
+    if (!mark.triangles.empty()) mark.nodes.clear();        // 면으로 칠했으면 노드 표식은 필요 없다
+    else if (mark.nodes.size() > 3000) mark.nodes.resize(3000);
   }
 }
 
@@ -320,10 +411,11 @@ Built build_scene(App& a, bool surface_pick = false) {
     b.picks.push_back(std::move(r));
     return static_cast<std::uint32_t>(b.picks.size());
   };
-  auto line = [&](const V3& p, const V3& q) {
-    b.scene.lines.push_back(vertex(p, {0, 0, 0}, edge_color, 0));
-    b.scene.lines.push_back(vertex(q, {0, 0, 0}, edge_color, 0));
+  auto colored_line = [&](const V3& p, const V3& q, const std::array<std::uint8_t, 3>& color) {
+    b.scene.lines.push_back(vertex(p, {0, 0, 0}, color, 0));
+    b.scene.lines.push_back(vertex(q, {0, 0, 0}, color, 0));
   };
+  auto line = [&](const V3& p, const V3& q) { colored_line(p, q, edge_color); };
   // 투명(RND-17): 지정한 쪽(형상·메시)의 면은 알파를 붙여 투명 목록에 넣는다
   const std::string transparent_what = vs.transparency.is_null() ? "" : vs.transparency.value("what", std::string("all"));
   const std::uint8_t alpha = vs.transparency.is_null() ? 255 : static_cast<std::uint8_t>(std::lround(255.0 * vs.transparency.value("alpha", 0.3)));
@@ -351,12 +443,13 @@ Built build_scene(App& a, bool surface_pick = false) {
   };
 
   const Mesh& m = a.mesh();
-  // 메시가 있는 형상 파트
+  // 메시가 보이는 형상 파트(auto 모드에서는 메시가 형상을 대신한다). 메시 파트를 숨기면(눈 아이콘) 형상이 다시 보인다
   std::set<Id> meshed;
   std::map<Id, std::size_t> mesh_part_elems;
   for (std::size_t i = 0; i < m.element_count(); ++i) ++mesh_part_elems[m.part_at(i)];
   for (const Object* mp : a.model().by_kind("mesh_part"))
-    if (has(mp->props, "geometry") && mesh_part_elems.count(mp->id)) meshed.insert(mp->props["geometry"].get<Id>());
+    if (has(mp->props, "geometry") && mesh_part_elems.count(mp->id) && !vs.hidden.count(mp->id))
+      meshed.insert(mp->props["geometry"].get<Id>());
 
   // --- 형상
   if (vs.show != "mesh" && geometry_available()) {
@@ -365,9 +458,22 @@ Built build_scene(App& a, bool surface_pick = false) {
       const std::size_t color_index = index++;
       if (part->suppressed || vs.hidden.count(part->id)) continue;
       if (vs.show == "auto" && meshed.count(part->id)) continue;
-      if (geometry_counts(a, part->id)["faces"].get<int>() == 0) continue;
+      const Json counts = geometry_counts(a, part->id);
+      const bool wire_only = counts["faces"].get<int>() == 0;
+      if (wire_only && counts["edges"].get<int>() == 0) continue;
       const Tessellation t = geometry_tessellation(a, part->id, vs.tess_deflection, vs.tess_angle);
       const auto color = base_of(part->id, kPalette[color_index % kPalette.size()]);
+      if (wire_only) {
+        // 면이 없는 파트(선 파트 — 보·트러스 골조): 모서리를 파트 색으로 그린다(표시 모드와 무관, 어두운 배경에서도 보이게)
+        for (std::size_t e = 0; e + 1 < t.edge_offsets.size(); ++e)
+          for (std::int64_t k = t.edge_offsets[e]; k + 1 < t.edge_offsets[e + 1]; ++k) {
+            const std::size_t i0 = static_cast<std::size_t>(k) * 3;
+            const V3 p{t.edge_points[i0], t.edge_points[i0 + 1], t.edge_points[i0 + 2]}, q{t.edge_points[i0 + 3], t.edge_points[i0 + 4], t.edge_points[i0 + 5]};
+            colored_line(p, q, color);
+            b.bounds.add(p), b.bounds.add(q);
+          }
+        continue;
+      }
       std::map<std::int64_t, std::uint32_t> face_ids;
       if (faces_on)
         for (std::size_t k = 0; k < t.triangle_face.size(); ++k) {
@@ -547,11 +653,26 @@ Built build_scene(App& a, bool surface_pick = false) {
     // 메시 표시 옵션(RND-20~22): 요소 경계선 끔, 요소 축소(면을 요소 중심 쪽으로 줄여 요소 하나하나가 보이게)
     const bool mesh_edges = vs.mesh_options.value("edges", true);
     const double shrink = std::clamp(vs.mesh_options.value("shrink", 0.0), 0.0, 0.9);
+    std::vector<V3> shrink_centers;
+    if (shrink > 0.0) {
+      shrink_centers.resize(m.element_count(), V3{0, 0, 0});
+      for (std::size_t i = 0; i < m.element_count(); ++i) {
+        const Id* nodes = m.nodes_at(i);
+        std::size_t count = 0;
+        for (int k : corner_positions(m.shape_at(i)))
+          if (nodes[k]) shrink_centers[i] = add(shrink_centers[i], pos(nodes[k])), ++count;
+        if (count) shrink_centers[i] = mul(shrink_centers[i], 1.0 / static_cast<double>(count));
+      }
+    }
+    auto shrink_point = [&](const V3& p, std::size_t i) {
+      return shrink > 0.0 ? add(shrink_centers[i], mul(sub(p, shrink_centers[i]), 1.0 - shrink)) : p;
+    };
     // 1D/2D 입체 표시(RND-22): 요소 → 프로퍼티(두께·단면)를 찾아 쉘은 두께만큼의 프리즘, 보는 단면 상자로 그린다
     const bool solid_1d_2d = vs.mesh_options.value("solid_1d_2d", false);
+    const bool beam_axes = vs.mesh_options.value("beam_axes", false);
     std::unordered_map<Id, const Object*> elem_property;
     std::map<Id, V3> beam_dir;
-    if (solid_1d_2d) {
+    if (solid_1d_2d || beam_axes) {
       for (const Object* pr : a.model().by_kind("property")) {
         if (pr->suppressed || !has(pr->props, "target")) continue;
         try {
@@ -579,24 +700,33 @@ Built build_scene(App& a, bool surface_pick = false) {
       return 0.0;
     };
     // 보 단면의 두 반폭(1축·2축)과 1축 방향. 단면을 모르면 false
-    auto beam_section = [&](std::size_t elem_index, const V3& axis, double& h1, double& h2, V3& a1) -> bool {
+    // 보 단면(PRP-05, D15): 부분 직사각형 목록(형강은 여러 개)과 1·2축, 전체 단면 중심의 이동(오프셋: 축 = 기준선 - offset × 크기)
+    std::string sec_kind;              // beam_section 이 채운다: 단면 종류("circ"·"pipe" 는 원통으로 그린다)
+    std::vector<double> sec_dims;
+    auto beam_section = [&](std::size_t elem_index, const V3& axis, std::vector<BeamRect>& rects, V3& a1, V3& a2, V3& shift) -> bool {
       auto it = elem_property.find(m.element_ids()[elem_index]);
       if (it == elem_property.end()) return false;
       const Json& q = it->second->props;
       const std::string t = q.value("type", std::string());
+      rects.clear();
+      sec_kind.clear(), sec_dims.clear();
+      double o1 = 0, o2 = 0, H = 0, B = 0;
       if (t == "truss") {
         const double side = std::sqrt(std::max(q.value("area", 0.0), 0.0));
-        h1 = h2 = side / 2;
+        rects.push_back({side, side, 0, 0});
       } else if (t == "beam" && has(q, "dimensions")) {
         const std::string sec = q.value("section", std::string("rect"));
-        const std::vector<double> d = q["dimensions"].get<std::vector<double>>();
-        if ((sec == "rect" || sec == "circ" || sec == "box") && d.size() >= 2) h1 = d[0] / 2, h2 = d[1] / 2;
-        else if (sec == "pipe" && d.size() >= 1) h1 = h2 = d[0];  // 바깥 반지름 → 지름 상자(솔버의 확장과 같다)
-        else return false;  // general: 치수가 없다
+        sec_kind = sec, sec_dims = q["dimensions"].get<std::vector<double>>();
+        rects = beam_section_rects(sec, q["dimensions"].get<std::vector<double>>());
+        std::tie(H, B) = beam_section_extent(sec, q["dimensions"].get<std::vector<double>>());
+        o1 = q.value("offset1", 0.0), o2 = q.value("offset2", 0.0);
+        if (!beam_section_composite(sec) && !rects.empty()) H = rects[0].t1, B = rects[0].t2;  // 오프셋 단위 = 그 방향 두께
       } else {
         return false;
       }
-      if (h1 <= 0 || h2 <= 0) return false;
+      for (const BeamRect& r : rects)
+        if (r.t1 <= 0 || r.t2 <= 0) return false;
+      if (rects.empty()) return false;
       V3 dir{0, 0, -1};  // 솔버 기본 1축 방향
       auto bd = beam_dir.find(m.element_ids()[elem_index]);
       if (bd != beam_dir.end()) dir = bd->second;
@@ -604,6 +734,8 @@ Built build_scene(App& a, bool surface_pick = false) {
       a1 = sub(dir, mul(axis, dot(dir, axis)));
       if (norm(a1) < 1e-9) a1 = cross(axis, std::fabs(axis[0]) < 0.9 ? V3{1, 0, 0} : V3{0, 1, 0});
       a1 = unit(a1);
+      a2 = unit(cross(axis, a1));
+      shift = add(mul(a1, -o1 * H), mul(a2, -o2 * B));
       return true;
     };
     auto quad = [&](const V3& p0, const V3& p1, const V3& p2, const V3& p3, const std::array<std::uint8_t, 3>& c, std::uint32_t id, Id owner) {
@@ -619,12 +751,17 @@ Built build_scene(App& a, bool surface_pick = false) {
       int count;
     };
     std::unordered_map<std::array<Id, 4>, FaceRef, KeyHash> faces;
+    std::vector<FaceRef> separated_faces;
     for (std::size_t i = 0; i < m.element_count(); ++i) {
       const Shape shape = m.shape_at(i);
       if (shape_info(shape).dim != 3 || hidden_elem(i)) continue;
       const Id* n = m.nodes_at(i);
       const auto& table = shape_faces(shape);
       for (std::size_t f = 0; f < table.size(); ++f) {
+        if (shrink > 0.0) {
+          separated_faces.push_back(FaceRef{i, static_cast<int>(f), 1});
+          continue;  // 요소 사이가 벌어지면 공유하던 내부 면도 노출된다.
+        }
         std::array<Id, 4> key{0, 0, 0, 0};
         for (std::size_t k = 0; k < table[f].size() && k < 4; ++k) key[k] = n[table[f][k]];
         std::sort(key.begin(), key.end());
@@ -637,14 +774,7 @@ Built build_scene(App& a, bool surface_pick = false) {
     auto polygon = [&](const std::vector<Id>& ids, const std::array<std::uint8_t, 3>& base, std::uint32_t id, std::size_t elem_index) {
       std::vector<V3> p;
       for (Id n : ids) p.push_back(pos(n)), b.bounds.add(p.back());
-      if (shrink > 0.0) {  // 요소 중심(꼭짓점 평균) 쪽으로 줄인다
-        V3 c{0, 0, 0};
-        const Id* en = m.nodes_at(elem_index);
-        const std::vector<int> corners = corner_positions(m.shape_at(elem_index));
-        for (int k : corners) c = add(c, pos(en[k]));
-        c = mul(c, 1.0 / static_cast<double>(corners.size()));
-        for (V3& q : p) q = add(c, mul(sub(q, c), 1.0 - shrink));
-      }
+      for (V3& q : p) q = shrink_point(q, elem_index);
       if (faces_on)
         for (std::size_t k = 1; k + 1 < p.size(); ++k) {  // 부채꼴로 삼각형 분할
           const V3 normal = unit(cross(sub(p[k], p[0]), sub(p[k + 1], p[0])));
@@ -658,15 +788,17 @@ Built build_scene(App& a, bool surface_pick = false) {
           if (shrink > 0.0 || edges.insert({std::min(u, v), std::max(u, v)}).second) line(p[k], p[(k + 1) % ids.size()]);
         }
     };
-    for (const auto& [key, ref] : faces) {
-      if (ref.count != 1) continue;
+    auto draw_face = [&](const FaceRef& ref) {
       const Id* n = m.nodes_at(ref.elem);
       const auto& corners = shape_faces(m.shape_at(ref.elem))[static_cast<std::size_t>(ref.face)];
       std::vector<Id> ids;
       // 요소면의 절점 순서는 법선이 요소 안쪽을 향한다 → 뒤집어 바깥을 향하게 그린다
       for (auto it = corners.rbegin(); it != corners.rend(); ++it) ids.push_back(n[*it]);
       polygon(ids, base_color(ref.elem), pick_id({"element_face", m.element_ids()[ref.elem], ref.face + 1}), ref.elem);
-    }
+    };
+    for (const auto& [key, ref] : faces)
+      if (ref.count == 1) draw_face(ref);
+    for (const FaceRef& ref : separated_faces) draw_face(ref);
     // --- 단면 결과(RES-15): 볼록 요소를 평면으로 자르면 변과의 교점이 볼록 다각형을 이룬다 → 교점을 중심 둘레로 정렬해 부채꼴로
     if (!vs.section.is_null()) {
       const V3 sp = v3(vs.section["point"]), sn = unit(v3(vs.section["normal"]));
@@ -858,6 +990,8 @@ Built build_scene(App& a, bool surface_pick = false) {
         const V3 up = mul(nn, thick * (0.5 - offset)), down = mul(nn, -thick * (0.5 + offset));
         std::vector<V3> top, bottom;
         for (const V3& q : p) top.push_back(add(q, up)), bottom.push_back(add(q, down)), b.bounds.add(top.back()), b.bounds.add(bottom.back());
+        for (V3& q : top) q = shrink_point(q, i);
+        for (V3& q : bottom) q = shrink_point(q, i);
         if (faces_on) {
           for (std::size_t k = 1; k + 1 < p.size(); ++k) {
             push_triangle(false, vertex(top[0], nn, color_of(ids[0], base, i), eid), m.part_at(i));
@@ -883,40 +1017,119 @@ Built build_scene(App& a, bool surface_pick = false) {
       } else {
         const V3 p = pos(ids[0]), q = pos(ids[1]);
         b.bounds.add(p), b.bounds.add(q);
-        double h1 = 0, h2 = 0;
-        V3 a1;
+        std::vector<BeamRect> rects;
+        V3 a1, a2, shift;
         const V3 axis = unit(sub(q, p));
-        if (solid_1d_2d && norm(sub(q, p)) > 0 && beam_section(i, axis, h1, h2, a1)) {
-          // 보 상자: 1축(a1)·2축(a2) 반폭만큼의 직사각형을 요소 양 끝에 두고 옆면 4개 + 끝면 2개
-          const V3 a2 = unit(cross(axis, a1));
-          const V3 e1 = mul(a1, h1), e2 = mul(a2, h2);
-          const std::array<V3, 4> c0{add(add(p, e1), e2), add(sub(p, e1), e2), sub(sub(p, e1), e2), sub(add(p, e1), e2)};
-          const std::array<V3, 4> c1{add(add(q, e1), e2), add(sub(q, e1), e2), sub(sub(q, e1), e2), sub(add(q, e1), e2)};
-          for (const V3& v : c0) b.bounds.add(v);
-          for (const V3& v : c1) b.bounds.add(v);
+        if (solid_1d_2d && norm(sub(q, p)) > 0 && beam_section(i, axis, rects, a1, a2, shift)) {
           const auto col0 = color_of(ids[0], base, i), col1 = color_of(ids[1], base, i);
-          if (faces_on) {
-            for (int k = 0; k < 4; ++k) {
-              const int j = (k + 1) % 4;
-              const V3 nn = unit(cross(sub(c0[static_cast<std::size_t>(j)], c0[static_cast<std::size_t>(k)]), sub(c1[static_cast<std::size_t>(k)], c0[static_cast<std::size_t>(k)])));
-              push_triangle(false, vertex(c0[static_cast<std::size_t>(k)], nn, col0, eid), m.part_at(i));
-              push_triangle(false, vertex(c0[static_cast<std::size_t>(j)], nn, col0, eid), m.part_at(i));
-              push_triangle(false, vertex(c1[static_cast<std::size_t>(j)], nn, col1, eid), m.part_at(i));
-              push_triangle(false, vertex(c0[static_cast<std::size_t>(k)], nn, col0, eid), m.part_at(i));
-              push_triangle(false, vertex(c1[static_cast<std::size_t>(j)], nn, col1, eid), m.part_at(i));
-              push_triangle(false, vertex(c1[static_cast<std::size_t>(k)], nn, col1, eid), m.part_at(i));
-            }
-            quad(c0[0], c0[3], c0[2], c0[1], col0, eid, m.part_at(i));
-            quad(c1[0], c1[1], c1[2], c1[3], col1, eid, m.part_at(i));
+          if ((sec_kind == "circ" || sec_kind == "pipe") && sec_dims.size() >= 2 && sec_dims[0] > 0) {
+            // 타원·원형 단면은 원통, 파이프는 속 빈 원통(바깥 반지름 r, 두께 t)으로 — 24 각형 근사
+            const int N = 24;
+            const bool hollow = sec_kind == "pipe";
+            const double r1 = hollow ? sec_dims[0] : sec_dims[0] / 2, r2 = hollow ? sec_dims[0] : sec_dims[1] / 2;
+            const double ri = hollow ? std::max(sec_dims[0] - sec_dims[1], 0.0) : 0.0;
+            const V3 pc = add(p, shift), qc = add(q, shift);
+            auto ring = [&](const V3& c, double ra, double rb, int k) {
+              const double ang = 2 * 3.14159265358979323846 * k / N;
+              return add(c, add(mul(a1, ra * std::cos(ang)), mul(a2, rb * std::sin(ang))));
+            };
+            auto wall = [&](double ra, double rb, bool inward) {  // 옆면(원통 벽). inward: 안쪽 벽은 법선이 안쪽
+              for (int k = 0; k < N; ++k) {
+                const int j = (k + 1) % N;
+                V3 p0 = ring(pc, ra, rb, k), p1 = ring(pc, ra, rb, j), q0 = ring(qc, ra, rb, k), q1 = ring(qc, ra, rb, j);
+                b.bounds.add(p0), b.bounds.add(q0);
+                p0 = shrink_point(p0, i), p1 = shrink_point(p1, i), q0 = shrink_point(q0, i), q1 = shrink_point(q1, i);
+                if (faces_on) {
+                  V3 nn = unit(cross(sub(p1, p0), sub(q0, p0)));
+                  if (inward) nn = mul(nn, -1.0);
+                  if (inward) std::swap(p0, p1), std::swap(q0, q1);
+                  push_triangle(false, vertex(p0, nn, col0, eid), m.part_at(i)), push_triangle(false, vertex(p1, nn, col0, eid), m.part_at(i)), push_triangle(false, vertex(q1, nn, col1, eid), m.part_at(i));
+                  push_triangle(false, vertex(p0, nn, col0, eid), m.part_at(i)), push_triangle(false, vertex(q1, nn, col1, eid), m.part_at(i)), push_triangle(false, vertex(q0, nn, col1, eid), m.part_at(i));
+                }
+                if (edges_on && mesh_edges) line(p0, p1), line(q0, q1);
+              }
+            };
+            wall(r1, r2, false);
+            if (hollow && ri > 0) wall(ri, ri, true);
+            if (faces_on)  // 끝면: 원은 부채꼴, 파이프는 고리
+              for (int end = 0; end < 2; ++end) {
+                const V3& c = end ? qc : pc;
+                const V3 nn = end ? axis : mul(axis, -1.0);
+                const auto col = end ? col1 : col0;
+                for (int k = 0; k < N; ++k) {
+                  const int j = (k + 1) % N;
+                  V3 o0 = shrink_point(ring(c, r1, r2, k), i), o1 = shrink_point(ring(c, r1, r2, j), i);
+                  if (hollow && ri > 0) {
+                    const V3 i0 = shrink_point(ring(c, ri, ri, k), i), i1 = shrink_point(ring(c, ri, ri, j), i);
+                    if (end) quad(o0, o1, i1, i0, col, eid, m.part_at(i));
+                    else quad(o1, o0, i0, i1, col, eid, m.part_at(i));
+                  } else {
+                    const V3 cc = shrink_point(c, i);
+                    if (end) push_triangle(false, vertex(cc, nn, col, eid), m.part_at(i)), push_triangle(false, vertex(o0, nn, col, eid), m.part_at(i)), push_triangle(false, vertex(o1, nn, col, eid), m.part_at(i));
+                    else push_triangle(false, vertex(cc, nn, col, eid), m.part_at(i)), push_triangle(false, vertex(o1, nn, col, eid), m.part_at(i)), push_triangle(false, vertex(o0, nn, col, eid), m.part_at(i));
+                  }
+                }
+              }
+            rects.clear();  // 아래 상자 그리기는 건너뛴다
           }
-          if (edges_on && mesh_edges)
-            for (int k = 0; k < 4; ++k) {
-              const int j = (k + 1) % 4;
-              line(c0[static_cast<std::size_t>(k)], c0[static_cast<std::size_t>(j)]), line(c1[static_cast<std::size_t>(k)], c1[static_cast<std::size_t>(j)]);
-              line(c0[static_cast<std::size_t>(k)], c1[static_cast<std::size_t>(k)]);
+          // 부분 직사각형마다 보 상자: 1축(a1)·2축(a2) 반폭만큼의 직사각형을 요소 양 끝에 두고 옆면 4개 + 끝면 2개(박스 단면은 벽 4개 → 속이 빈다)
+          for (const BeamRect& r : rects) {
+            const V3 center = add(shift, add(mul(a1, r.c1), mul(a2, r.c2)));
+            const V3 e1 = mul(a1, r.t1 / 2), e2 = mul(a2, r.t2 / 2);
+            const V3 pc = add(p, center), qc = add(q, center);
+            std::array<V3, 4> c0{add(add(pc, e1), e2), add(sub(pc, e1), e2), sub(sub(pc, e1), e2), sub(add(pc, e1), e2)};
+            std::array<V3, 4> c1{add(add(qc, e1), e2), add(sub(qc, e1), e2), sub(sub(qc, e1), e2), sub(add(qc, e1), e2)};
+            for (const V3& v : c0) b.bounds.add(v);
+            for (const V3& v : c1) b.bounds.add(v);
+            for (V3& v : c0) v = shrink_point(v, i);
+            for (V3& v : c1) v = shrink_point(v, i);
+            if (faces_on) {
+              for (int k = 0; k < 4; ++k) {
+                const int j = (k + 1) % 4;
+                const V3 nn = unit(cross(sub(c0[static_cast<std::size_t>(j)], c0[static_cast<std::size_t>(k)]), sub(c1[static_cast<std::size_t>(k)], c0[static_cast<std::size_t>(k)])));
+                push_triangle(false, vertex(c0[static_cast<std::size_t>(k)], nn, col0, eid), m.part_at(i));
+                push_triangle(false, vertex(c0[static_cast<std::size_t>(j)], nn, col0, eid), m.part_at(i));
+                push_triangle(false, vertex(c1[static_cast<std::size_t>(j)], nn, col1, eid), m.part_at(i));
+                push_triangle(false, vertex(c0[static_cast<std::size_t>(k)], nn, col0, eid), m.part_at(i));
+                push_triangle(false, vertex(c1[static_cast<std::size_t>(j)], nn, col1, eid), m.part_at(i));
+                push_triangle(false, vertex(c1[static_cast<std::size_t>(k)], nn, col1, eid), m.part_at(i));
+              }
+              quad(c0[0], c0[3], c0[2], c0[1], col0, eid, m.part_at(i));
+              quad(c1[0], c1[1], c1[2], c1[3], col1, eid, m.part_at(i));
             }
+            if (edges_on && mesh_edges)
+              for (int k = 0; k < 4; ++k) {
+                const int j = (k + 1) % 4;
+                line(c0[static_cast<std::size_t>(k)], c0[static_cast<std::size_t>(j)]), line(c1[static_cast<std::size_t>(k)], c1[static_cast<std::size_t>(j)]);
+                line(c0[static_cast<std::size_t>(k)], c1[static_cast<std::size_t>(k)]);
+              }
+          }
         } else {
-          line(p, q);
+          // 선 요소(보·트러스)를 선으로: 파트 색(컨투어가 있으면 노드 값의 색). 모서리색(짙은 회색)은 어두운 배경에서 안 보인다
+          b.scene.lines.push_back(vertex(shrink_point(p, i), {0, 0, 0}, color_of(ids[0], base, i), eid));
+          b.scene.lines.push_back(vertex(shrink_point(q, i), {0, 0, 0}, color_of(ids[1], base, i), eid));
+        }
+        // 1축 방향 표식(PRP-07): 요소 중앙에서 단면 1축 쪽으로 주황 선. 단면을 알면 높이의 반, 모르면 요소 길이의 15%(방향은 프로퍼티·요소별 지정, 없으면 솔버 기본 (0,0,-1))
+        if (beam_axes && norm(sub(q, p)) > 0) {
+          const V3 mid = mul(add(p, q), 0.5);
+          double len = 0.15 * norm(sub(q, p));
+          V3 a1m;
+          if (beam_section(i, axis, rects, a1, a2, shift)) {
+            double H = 0;
+            for (const BeamRect& r : rects) H = std::max(H, 2 * (std::fabs(r.c1) + r.t1 / 2));
+            if (H > 0) len = 0.5 * H;
+            a1m = a1;
+          } else {
+            V3 dir{0, 0, -1};
+            auto bd = beam_dir.find(m.element_ids()[i]);
+            if (bd != beam_dir.end()) dir = bd->second;
+            a1m = sub(dir, mul(axis, dot(dir, axis)));
+            if (norm(a1m) < 1e-9) continue;  // 축과 나란: 표식 없음(case.check 가 오류로 잡는다)
+            a1m = unit(a1m);
+          }
+          const std::array<std::uint8_t, 3> orange{235, 140, 40};
+          b.scene.lines.push_back(vertex(mid, {0, 0, 0}, orange, 0));
+          b.scene.lines.push_back(vertex(add(mid, mul(a1m, len)), {0, 0, 0}, orange, 0));
         }
       }
     }
@@ -1349,6 +1562,97 @@ void add_overlay(ViewState& vs, const Built& built, RenderScene& scene) {
   }
 }
 
+// 고른 구속(WT-22 의 선택 객체 가운데 구속 또는 구속 셋). 비어 있으면 모두 보통으로, 있으면 고른 것만 진하게 그린다
+std::set<Id> focused_bcs(const ViewState& vs, const Built& built) {
+  std::set<Id> out;
+  for (const BcMark& mark : built.bc_marks)
+    if (std::any_of(vs.selected_objects.begin(), vs.selected_objects.end(), [&](Id s) { return s == mark.id || s == mark.set; })) out.insert(mark.id);
+  return out;
+}
+
+// 구속 표시(BC-13): 적용 영역을 구속의 색으로 옅게 칠하고, 고른 구속에는 자유도마다 축 기호를 화면 고정 크기로 그린다
+// (병진 = 노드에 끝이 닿는 원뿔, 회전 = 그 축에 꿴 원판). 이름표는 add_hud 가 그린다.
+void add_bc_marks(const ViewState& vs, const Built& built, RenderScene& scene, int height) {
+  if (built.bc_marks.empty()) return;
+  const Camera& cam = vs.camera;
+  const V3 forward = unit(sub(cam.target, cam.eye));
+  auto world_per_pixel = [&](const V3& p) {
+    const double visible = cam.ortho ? cam.height : 2.0 * std::max(dot(sub(p, cam.eye), forward), 1e-9) * std::tan(0.5 * cam.fov * kPi / 180.0);
+    return visible / std::max(height, 1);
+  };
+  // 조명 없이 그리는 오버레이라 면의 기울기에 따른 밝기를 여기서 넣는다
+  auto solid = [&](const V3& p0, const V3& p1, const V3& p2, const std::array<std::uint8_t, 3>& c) {
+    const double shade = 0.5 + 0.5 * std::fabs(dot(unit(cross(sub(p1, p0), sub(p2, p0))), forward));
+    const std::array<std::uint8_t, 3> lit{static_cast<std::uint8_t>(c[0] * shade), static_cast<std::uint8_t>(c[1] * shade), static_cast<std::uint8_t>(c[2] * shade)};
+    for (const V3& p : {p0, p1, p2}) scene.overlay.push_back(vertex(p, {0, 0, 0}, lit, 0));
+  };
+  const int segments = 12;
+  auto ring = [&](const V3& center, const V3& axis, double radius) {
+    const V3 u = unit(cross(axis, std::fabs(axis[2]) < 0.9 ? V3{0, 0, 1} : V3{1, 0, 0})), v = cross(axis, u);
+    std::vector<V3> out;
+    for (int i = 0; i <= segments; ++i) {
+      const double ang = 2.0 * kPi * i / segments;
+      out.push_back(add(center, add(mul(u, radius * std::cos(ang)), mul(v, radius * std::sin(ang)))));
+    }
+    return out;
+  };
+  const std::set<Id> focus = focused_bcs(vs, built);
+  for (const BcMark& mark : built.bc_marks) {
+    const bool focused = focus.count(mark.id) > 0, dim = !focus.empty() && !focused;
+    const std::uint8_t alpha = focused ? 190 : dim ? 55 : 135;
+    for (std::size_t k : mark.triangles)
+      for (std::size_t c = 0; c < 3; ++c) {
+        RenderVertex v = built.scene.triangles[k + c];
+        v.normal[0] = v.normal[1] = v.normal[2] = 0.0f;  // 조명 없이, 면보다 카메라 쪽으로 당겨 그린다
+        v.color[0] = mark.color[0], v.color[1] = mark.color[1], v.color[2] = mark.color[2], v.color[3] = alpha;
+        v.id = 0;
+        scene.transparent.push_back(v);
+      }
+    if (!dim)
+      for (const V3& p : mark.nodes) {  // 면이 없는 대상: 노드마다 작은 팔면체
+        const double r = 4.0 * world_per_pixel(p);
+        const V3 axes[3] = {{r, 0, 0}, {0, r, 0}, {0, 0, r}};
+        for (int sx : {1, -1})
+          for (int sy : {1, -1})
+            for (int sz : {1, -1}) solid(add(p, mul(axes[0], sx)), add(p, mul(axes[1], sy)), add(p, mul(axes[2], sz)), mark.color);
+      }
+    if (!focused) continue;
+    for (const V3& p : mark.points) {
+      const double len = 26.0 * world_per_pixel(p);
+      if (mark.dofs.size() == 6) {  // 완전 고정: 축마다 그리지 않고 노드에 상자 하나
+        const double r = 0.3 * len;
+        auto corner = [&](int i) { return add(p, V3{(i & 1 ? r : -r), (i & 2 ? r : -r), (i & 4 ? r : -r)}); };
+        static const int quads[6][4] = {{0, 1, 3, 2}, {4, 6, 7, 5}, {0, 4, 5, 1}, {2, 3, 7, 6}, {0, 2, 6, 4}, {1, 5, 7, 3}};
+        for (const auto& f : quads) solid(corner(f[0]), corner(f[1]), corner(f[2]), mark.color), solid(corner(f[0]), corner(f[2]), corner(f[3]), mark.color);
+        continue;
+      }
+      for (int dof : mark.dofs) {
+        // 기호는 축의 두 쪽 가운데 카메라를 향한 쪽에 둔다(입체 속에 묻히지 않게)
+        const std::size_t k = static_cast<std::size_t>((dof - 1) % 3);
+        V3 axis{0, 0, 0};
+        axis[k] = forward[k] > 0 ? -1.0 : 1.0;
+        if (dof <= 3) {
+          const V3 base = add(p, mul(axis, len));
+          const std::vector<V3> rim = ring(base, axis, 0.32 * len);
+          for (int i = 0; i < segments; ++i) solid(p, rim[static_cast<std::size_t>(i)], rim[static_cast<std::size_t>(i + 1)], mark.color), solid(base, rim[static_cast<std::size_t>(i)], rim[static_cast<std::size_t>(i + 1)], mark.color);
+        } else {
+          const bool on_cone = std::find(mark.dofs.begin(), mark.dofs.end(), dof - 3) != mark.dofs.end();
+          const V3 c0 = add(p, mul(axis, 1.0 * len)), c1 = add(p, mul(axis, 1.12 * len));
+          const std::vector<V3> r0 = ring(c0, axis, 0.45 * len), r1 = ring(c1, axis, 0.45 * len);
+          for (int i = 0; i < segments; ++i) {
+            const std::size_t j = static_cast<std::size_t>(i);
+            solid(c0, r0[j], r0[j + 1], mark.color), solid(c1, r1[j], r1[j + 1], mark.color);
+            solid(r0[j], r0[j + 1], r1[j + 1], mark.color), solid(r0[j], r1[j + 1], r1[j], mark.color);
+          }
+          if (!on_cone) {  // 같은 축의 병진 구속이 없으면 원판을 노드에 잇는 대
+            scene.lines.push_back(vertex(p, {0, 0, 0}, mark.color, 0)), scene.lines.push_back(vertex(c0, {0, 0, 0}, mark.color, 0));
+          }
+        }
+      }
+    }
+  }
+}
+
 // ------------------------------------------------------------ 화면 고정 요소(RND-35~37): 좌표축·글자·범례
 // 글자는 5×7 점 글꼴을 사각형으로 그린다(외부 글꼴 라이브러리 없이). 대문자·숫자·몇 가지 기호만 있다.
 using render_detail::Hud;
@@ -1420,6 +1724,37 @@ void add_hud(App& a, const ViewState& vs, const Built& built, RenderScene& scene
       for (Id id : m.element_ids()) { if (!budget) break; draw_element(id); }
     } else {
       for (const Json& id : vs.labels.value("elements", Json::array())) { if (!budget) break; draw_element(id.get<Id>()); }
+    }
+  }
+  // 구속 이름표(BC-13): 구속마다 하나, 대상 가운데의 노드에서 지시선을 뽑아 색 바탕에 흰 글자로. 겹치면 아래로 민다
+  if (!built.bc_marks.empty()) {
+    const std::set<Id> focus = focused_bcs(vs, built);
+    std::vector<std::array<double, 4>> placed;
+    for (const BcMark& mark : built.bc_marks) {
+      const V3& p = mark.anchor;
+      double c[4] = {0, 0, 0, 0};
+      for (int r = 0; r < 4; ++r) c[r] = mvp[r] * p[0] + mvp[4 + r] * p[1] + mvp[8 + r] * p[2] + mvp[12 + r];
+      if (c[3] <= 1e-12) continue;
+      const double px = (c[0] / c[3] * 0.5 + 0.5) * width, py = (c[1] / c[3] * 0.5 + 0.5) * height;
+      if (px < 0 || px > width || py < 0 || py > height) continue;
+      const bool focused = focus.count(mark.id) > 0, dim = !focus.empty() && !focused;
+      const double scale = dim ? 1.5 : 2.0, pad = 4.0;
+      const double w = Hud::text_width(mark.text, scale) - scale + 2 * pad, tag_h = 7 * scale + 2 * pad;
+      double x = std::clamp(px + 16.0, 2.0, std::max(2.0, width - w - 2.0)), y = std::clamp(py - 16.0 - tag_h, 2.0, std::max(2.0, height - tag_h - 2.0));
+      for (int tries = 0; tries < 12; ++tries) {
+        const bool overlap = std::any_of(placed.begin(), placed.end(), [&](const std::array<double, 4>& q) { return x < q[2] && q[0] < x + w && y < q[3] && q[1] < y + tag_h; });
+        if (!overlap) break;
+        y += tag_h + 3.0;
+      }
+      placed.push_back({x, y, x + w, y + tag_h});
+      std::array<std::uint8_t, 3> color = mark.color;
+      if (dim)  // 고르지 않은 구속은 바탕색 쪽으로 흐리게
+        for (std::size_t k = 0; k < 3; ++k) color[k] = static_cast<std::uint8_t>(0.45 * color[k] + 0.55 * 255.0 * scene.background[k]);
+      h.line(px, py, x, y + tag_h, color);
+      h.rect(px - 2.5, py - 2.5, px + 2.5, py + 2.5, color);
+      if (focused) h.rect(x - 2.0, y - 2.0, x + w + 2.0, y + tag_h + 2.0, text_color, 0.03f);  // 고른 구속은 테두리
+      h.rect(x, y, x + w, y + tag_h, color, 0.02f);
+      h.text(x + pad, y + pad, mark.text, {255, 255, 255}, scale);
     }
   }
   if (cube_visible(vs)) {
@@ -1596,6 +1931,7 @@ Rendered render_one(App& a, int width, int height, const Json* background) {
   float view[16], mvp[16];
   matrices(vs, r.built, rw, rh, mvp, view);  // 깊이 범위도 장면에 맞춘다(RND-11)
   add_overlay(vs, r.built, r.built.scene);
+  add_bc_marks(vs, r.built, r.built.scene, height);
   apply_clips(vs, r.built.scene);
   if (vs.quality.value("transparency", std::string("unsorted")) == "sorted") sort_transparent(r.built.scene, view);
   add_hud(a, vs, r.built, r.built.scene, width, height, view, mvp);
@@ -1720,6 +2056,7 @@ std::array<int, 2> view_present(App& app) {
   RenderScene scene = built->scene;  // 강조 오버레이·화면 고정 요소를 더한 사본(캐시는 그대로)
   scene.pixel_scale = pixel_scale;
   add_overlay(vs, *built, scene);
+  add_bc_marks(vs, *built, scene, size[1]);
   apply_clips(vs, scene);
   if (vs.quality.value("transparency", std::string("unsorted")) == "sorted") sort_transparent(scene, view);
   add_hud(app, vs, *built, scene, size[0], size[1], view, mvp);
@@ -2211,12 +2548,13 @@ void register_view_commands(App& app) {
     app.register_command(std::move(c));
   }
   {
-    CommandSpec c = base("view.hide", 'V', "객체(형상 파트·메시 파트)를 숨긴다. 숨긴 파트의 형상·요소는 그리지 않는다", "WT-20, RND-23");
+    CommandSpec c = base("view.hide", 'V', "객체를 숨긴다: 형상 파트·메시 파트는 형상·요소를, 하중 셋·구속 셋은 그 항목의 심볼을 그리지 않는다", "WT-20, RND-23, RND-34");
     c.params = {F("ids", "integer_list", "객체 ID").call_req().ex({1})};
     c.fn = [](App& a, const Json& p) {
       for (const Json& i : p["ids"]) {
         const Object& o = a.model().get(i.get<Id>());
-        if (o.kind != "part" && o.kind != "mesh_part") throw Error("wrong_kind", "형상 파트·메시 파트만 숨길 수 있습니다", {{"object", o.id}, {"kind", o.kind}});
+        if (o.kind != "part" && o.kind != "mesh_part" && o.kind != "load_set" && o.kind != "bc_set")
+          throw Error("wrong_kind", "형상 파트·메시 파트·하중 셋·구속 셋만 숨길 수 있습니다", {{"object", o.id}, {"kind", o.kind}});
         state(a).hidden.insert(o.id);
       }
       return Json{{"hidden", std::vector<Id>(state(a).hidden.begin(), state(a).hidden.end())}};
@@ -2537,7 +2875,7 @@ void register_view_commands(App& app) {
       std::string html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>" + esc(rep.props.value("title", rep.name)) + "</title>"
                          "<style>body{font-family:sans-serif;margin:24px}table{border-collapse:collapse}td,th{border:1px solid #999;padding:2px 6px;font-size:13px}"
                          "img{border:1px solid #ccc}h2{margin-top:28px}</style></head><body>";
-      html += "<h1>" + esc(rep.props.value("title", rep.name)) + "</h1><p>open-fep " + App::version() + "</p>";
+      html += "<h1>" + esc(rep.props.value("title", rep.name)) + "</h1><p>NASA-95 " + App::version() + "</p>";
       Json made = Json::array();
       ViewState& vs = state(a);
       for (const Json& item : rep.props.value("items", Json::array())) {
@@ -2554,7 +2892,7 @@ void register_view_commands(App& app) {
           const int w = item.value("width", 800), h = item.value("height", 600);
           const RenderImage img = render(a, w, h).image;
           // PNG 를 메모리에 만든다: write_png 는 파일에 쓰므로 임시 파일을 거친다
-          const std::filesystem::path tmp = std::filesystem::temp_directory_path() / ("ofep_report_" + std::to_string(rep.id) + "_" + std::to_string(made.size()) + ".png");
+          const std::filesystem::path tmp = std::filesystem::temp_directory_path() / ("nasa95_report_" + std::to_string(rep.id) + "_" + std::to_string(made.size()) + ".png");
           const std::u8string tmp_u8 = tmp.u8string();
           write_png(std::string(tmp_u8.begin(), tmp_u8.end()), img);
           std::ifstream f(tmp, std::ios::binary);
@@ -2784,16 +3122,23 @@ void register_view_commands(App& app) {
                          "보·트러스는 단면 치수(rect·circ·box 는 a×b, pipe 는 지름 상자, 트러스는 √A 정사각형)의 상자. 단면을 모르면 선). 매개변수 없이 부르면 기본으로. 2차 곡면 표시는 미구현",
                          "RND-20, RND-21, RND-22");
     c.params = {F("edges", "bool", "요소 경계선을 그린다(기본 켬)"), F("shrink", "number", "요소를 중심 쪽으로 줄이는 비율(0 = 그대로)").ge(0).le(0.9),
-                F("solid_1d_2d", "bool", "보·쉘을 두께·단면이 있는 입체로 그린다(기본 끔)")};
-    c.fn = [](App& a, const Json& p) {
+                F("solid_1d_2d", "bool", "보·쉘을 두께·단면이 있는 입체로 그린다(기본 끔)"),
+                F("beam_axes", "bool", "보 요소마다 단면 1축 방향 표식(요소 중앙에서 1축 쪽 주황 선, 길이 = 단면 높이의 반 또는 요소 길이의 15%)을 그린다(기본 끔, PRP-07)")};
+    auto options = [](const ViewState& vs) {
+      return Json{{"edges", vs.mesh_options.value("edges", true)}, {"shrink", vs.mesh_options.value("shrink", 0.0)},
+                  {"solid_1d_2d", vs.mesh_options.value("solid_1d_2d", false)}, {"beam_axes", vs.mesh_options.value("beam_axes", false)}};
+    };
+    c.fn = [options](App& a, const Json& p) {
       ViewState& vs = state(a);
-      if (!has(p, "edges") && !has(p, "shrink") && !has(p, "solid_1d_2d")) vs.mesh_options = Json::object();
+      if (!has(p, "edges") && !has(p, "shrink") && !has(p, "solid_1d_2d") && !has(p, "beam_axes")) vs.mesh_options = Json::object();
       for (const FieldSpec& f : a.commands().at("view.mesh_options").params)
         if (has(p, f.name.c_str())) check_value(f, p[f.name], nullptr), vs.mesh_options[f.name] = p[f.name];
-      return Json{{"edges", vs.mesh_options.value("edges", true)}, {"shrink", vs.mesh_options.value("shrink", 0.0)},
-                  {"solid_1d_2d", vs.mesh_options.value("solid_1d_2d", false)}};
+      return options(vs);
     };
     app.register_command(std::move(c));
+    CommandSpec g = base("view.mesh_options_get", 'Q', "메시 표시 옵션을 초기화하지 않고 조회한다", "RND-20, RND-21, RND-22");
+    g.fn = [options](App& a, const Json&) { return options(state(a)); };
+    app.register_command(std::move(g));
   }
   {
     CommandSpec g = base("view.tree_state_get", 'V', "워크 트리의 펼침·접힘 상태(UI 가 저장한 값)를 읽는다", "WT-36");
@@ -3249,9 +3594,20 @@ void register_view_commands(App& app) {
     app.register_command(std::move(c));
   }
   {
-    CommandSpec c = base("view.symbols", 'V', "하중·경계조건 심볼 표시를 켜고 끈다(스텝에서 유효한 것을 그린다)", "RND-34, RND-35, LOD-16, BC-13");
-    c.params = {F("step", "ref", "스텝(없으면 끈다)").ref("step"), F("size", "number", "심볼 크기(없으면 모델 크기의 6%)").gt(0).unit("length")};
+    CommandSpec c = base("view.symbols", 'V', "하중·경계조건 심볼 표시를 켜고 끈다: step 이면 그 스텝에서 유효한 것, sets 면 그 하중 셋·구속 셋의 항목을 바로 그린다. 둘 다 없으면 끈다. view.hide 로 숨긴 셋의 항목은 그리지 않는다", "RND-34, RND-35, LOD-16, BC-13");
+    c.params = {F("step", "ref", "스텝(sets 도 없으면 끈다)").ref("step"), F("sets", "integer_list", "바로 그릴 하중 셋·구속 셋 ID(스텝 대신)").ge(1),
+                F("size", "number", "심볼 크기(없으면 모델 크기의 6%)").gt(0).unit("length")};
     c.fn = [](App& a, const Json& p) {
+      if (has(p, "sets")) {
+        for (const Json& sid : p["sets"]) {
+          const Object& o = a.model().get(sid.get<Id>());
+          if (o.kind != "load_set" && o.kind != "bc_set") throw Error("wrong_kind", "하중 셋·구속 셋이 아닙니다", {{"object", o.id}, {"kind", o.kind}});
+        }
+        Json s{{"sets", p["sets"]}};
+        if (has(p, "size")) s["size"] = p["size"];
+        state(a).symbols = s;
+        return Json{{"shown", true}, {"sets", p["sets"]}};
+      }
       if (!has(p, "step")) {
         state(a).symbols = nullptr;
         return Json{{"shown", false}};
@@ -3301,6 +3657,15 @@ void register_view_commands(App& app) {
       info["legend"] = state(a).legend;
       info["hidden"] = std::vector<Id>(state(a).hidden.begin(), state(a).hidden.end());
       info["symbols"] = !state(a).symbols.is_null();  // 하중·구속 심볼이 켜져 있는가(창의 토글 버튼이 비춘다)
+      // 마지막으로 만든 장면의 구속 표시(BC-13): 이름표 글, 색, 칠한 면(삼각형 수)·노드 표식 수, 고른 구속인가
+      Json marks = Json::array();
+      if (state(a).scene && !state(a).symbols.is_null()) {
+        const std::set<Id> focus = focused_bcs(state(a), *state(a).scene);
+        for (const BcMark& mark : state(a).scene->bc_marks)
+          marks.push_back(Json{{"id", mark.id}, {"label", mark.text}, {"color", mark.color}, {"triangles", mark.triangles.size()},
+                               {"nodes", mark.nodes.size()}, {"glyph_points", mark.points.size()}, {"focused", focus.count(mark.id) > 0}});
+      }
+      info["bc_marks"] = marks;
       // GPU 메모리 한도(RND-44): view.quality gpu_memory_limit(바이트). 마지막 프레임 + 남아 있는 할당이 한도의 80% 를 넘으면 near_limit, 넘으면 over_limit.
       Json& g = info["gpu_memory"];
       const std::uint64_t used = g.value("last_frame", std::uint64_t(0)) + g.value("persistent", std::uint64_t(0));
@@ -3315,4 +3680,4 @@ void register_view_commands(App& app) {
   }
 }
 
-}  // namespace ofep
+}  // namespace nasa95

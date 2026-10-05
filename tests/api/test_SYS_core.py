@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -41,7 +41,7 @@ def test_SYS_01_03_04_object_style_access(app):
     assert len(step.loads) == 1 and len(step.bcs) == 1
     tree = app.execute("project.tree", kind="case")
     assert tree[0]["items"][0]["children"][0]["id"] == step.id
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.model.cases["없는 이름"]
     assert e.value.code == "not_found"
 
@@ -116,7 +116,7 @@ def test_SYS_04_02_transaction_rollback(app):
 @pytest.mark.feature("API-04")
 def test_SYS_04_03_transaction_fails_midway(app):
     before, hist = total(app), history_len(app)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         with app.transaction("실패하는 묶음"):
             app.execute("material.create", name="ok")
             app.execute("material.create", name="ok")  # 이름 충돌로 실패
@@ -147,7 +147,7 @@ def test_SYS_04_04_05_batch_actions(app):
 @pytest.mark.feature("API-04")
 def test_SYS_04_nested_transaction_rejected(app):
     app.execute("app.transaction_begin")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("app.transaction_begin")
     assert e.value.code == "invalid_state"
     app.execute("app.transaction_rollback")
@@ -172,7 +172,7 @@ def test_SYS_06_02_failed_commands_not_journaled(app, tmp_path):
     path = str(tmp_path / "run.journal")
     app.execute("journal.start", path=path)
     app.execute("material.create", name="a")
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("material.create", name="a")
     app.execute("material.list")  # 조회는 기록하지 않는다
     app.execute("journal.stop")
@@ -187,7 +187,7 @@ def test_SYS_06_02_failed_commands_not_journaled(app, tmp_path):
 @pytest.mark.feature("CMN-09")
 def test_SYS_08_01_save_and_open(app, tmp_path):
     prepare_static_case(app)
-    path = str(tmp_path / "model.ofep")
+    path = str(tmp_path / "model.nasa95")
     app.execute("project.save_as", path=path)
     before = total(app)
     other = App()
@@ -202,14 +202,14 @@ def test_SYS_08_01_save_and_open(app, tmp_path):
 def test_SYS_08_02_open_damaged_file(app, tmp_path):
     prepare_static_case(app)
     before = total(app)
-    bad = tmp_path / "bad.ofep"
-    bad.write_text('{"format": "open-fep", "objects": [', encoding="utf-8")
-    with pytest.raises(OfepError) as e:
+    bad = tmp_path / "bad.nasa95"
+    bad.write_text('{"format": "NASA-95", "objects": [', encoding="utf-8")
+    with pytest.raises(Nasa95Error) as e:
         app.execute("project.open", path=str(bad))
     assert e.value.code == "invalid_file"
     assert total(app) == before  # 실패하면 현재 모델을 그대로 둔다
-    with pytest.raises(OfepError) as e:
-        app.execute("project.open", path=str(tmp_path / "없는 파일.ofep"))
+    with pytest.raises(Nasa95Error) as e:
+        app.execute("project.open", path=str(tmp_path / "없는 파일.nasa95"))
     assert e.value.code == "io_error"
 
 
@@ -218,7 +218,7 @@ def test_SYS_08_03_06_modified_flag(app, tmp_path):
     assert app.execute("project.info")["modified"] is False
     app.execute("material.create", name="a")
     assert app.execute("project.info")["modified"] is True
-    app.execute("project.save_as", path=str(tmp_path / "a.ofep"))
+    app.execute("project.save_as", path=str(tmp_path / "a.nasa95"))
     assert app.execute("project.info")["modified"] is False
     app.execute("material.create", name="b")
     assert app.execute("project.info")["modified"] is True
@@ -226,9 +226,9 @@ def test_SYS_08_03_06_modified_flag(app, tmp_path):
     assert app.execute("project.info")["modified"] is False
     app.undo()
     assert app.execute("project.info")["modified"] is True
-    app.execute("project.save_as", path=str(tmp_path / "b.ofep"))
+    app.execute("project.save_as", path=str(tmp_path / "b.nasa95"))
     info = app.execute("project.info")
-    assert info["modified"] is False and info["path"].endswith("b.ofep")
+    assert info["modified"] is False and info["path"].endswith("b.nasa95")
 
 
 @pytest.mark.feature("API-39")
@@ -249,7 +249,7 @@ def test_SYS_08_04_digest_by_area(app):
 def test_SYS_09_01_02_handle_of_deleted_object(app):
     m = app.model.materials.create(name="a")
     m.delete()
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         m.get()
     assert e.value.code == "not_found"
     app.undo()
@@ -269,7 +269,7 @@ def test_SYS_11_04_05_references(app):
     assert [r["id"] for r in f.references()] == [load.id]
     assert unused.references() == []
     for h in (m, f):
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             h.delete()
         assert e.value.code == "referenced"
     # 참조하는 쪽까지 함께 지우는 삭제(케이스 삭제)는 막지 않는다
@@ -280,7 +280,7 @@ def test_SYS_11_04_05_references(app):
 # ---------------------------------------------------------------- SYS-13
 @pytest.mark.feature("CMN-02")
 def test_SYS_13_02_parallel_axes_rejected(app):
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.model.csys.create_cylindrical(origin=[0, 0, 0], axis1_point=[0, 0, 1], plane12_point=[0, 0, 3])
     assert e.value.code == "invalid_geometry"
     assert len(app.model.csys) == 0
@@ -336,7 +336,7 @@ def test_SYS_21_01_02_08_09_search(app):
 def test_SYS_08_05_korean_paths(app, tmp_path):
     """한글 경로의 프로젝트 저장·열기와 저널."""
     app.model.materials.create(name="A")
-    path = tmp_path / "한글 폴더" / "한글프로젝트.ofep"
+    path = tmp_path / "한글 폴더" / "한글프로젝트.nasa95"
     path.parent.mkdir()
     assert app.execute("project.save_as", path=str(path))["path"] == str(path) and path.exists()
     app.execute("project.new")
@@ -383,7 +383,7 @@ def test_SYS_20_program_settings(app, tmp_path, monkeypatch):
     """프로그램 설정: 파일에 저장되고 새 App 이 다시 읽는다. 모델·Undo 와 무관하다. threads 는 검사한다."""
     import json
     path = tmp_path / "settings.json"
-    monkeypatch.setenv("OFEP_SETTINGS", str(path))
+    monkeypatch.setenv("NASA95_SETTINGS", str(path))
     a = App()
     assert a.execute("app.settings_get") == {"path": str(path), "values": {}}
     from conftest import history_len
@@ -391,14 +391,14 @@ def test_SYS_20_program_settings(app, tmp_path, monkeypatch):
     r = a.execute("app.settings_set", key="solver_executable", value="C:/ccx/ccx.exe")
     assert r["value"] == "C:/ccx/ccx.exe" and path.exists() and json.loads(path.read_text(encoding="utf-8")) == {"solver_executable": "C:/ccx/ccx.exe"}
     a.execute("app.settings_set", key="threads", value=4)
-    a.execute("app.settings_set", key="ui", value={"theme": "dark", "recent": ["a.ofep"]})
-    assert a.execute("app.settings_get", key="ui")["value"] == {"theme": "dark", "recent": ["a.ofep"]}
+    a.execute("app.settings_set", key="ui", value={"theme": "dark", "recent": ["a.nasa95"]})
+    assert a.execute("app.settings_get", key="ui")["value"] == {"theme": "dark", "recent": ["a.nasa95"]}
     assert history_len(a) == h and a.execute("project.info")["modified"] is False  # 설정은 모델이 아니다
     b = App()  # 새 프로세스처럼 다시 읽는다
-    assert b.execute("app.settings_get")["values"] == {"solver_executable": "C:/ccx/ccx.exe", "threads": 4, "ui": {"theme": "dark", "recent": ["a.ofep"]}}
+    assert b.execute("app.settings_get")["values"] == {"solver_executable": "C:/ccx/ccx.exe", "threads": 4, "ui": {"theme": "dark", "recent": ["a.nasa95"]}}
     b.execute("app.settings_set", key="threads", value=None)
     assert "threads" not in App().execute("app.settings_get")["values"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         b.execute("app.settings_set", key="threads", value=0)
     assert e.value.code == "invalid_param" and "threads" not in App().execute("app.settings_get")["values"]
     path.write_text("{ broken", encoding="utf-8")
@@ -417,8 +417,8 @@ def test_SYS_22_extensions(tmp_path, monkeypatch):
     (ext_dir / "broken_ext").mkdir()
     (ext_dir / "broken_ext" / "__init__.py").write_text("def register(app):\n    app.register_command('broken.x', lambda p: {}, kind='Q', desc='x')\n    raise RuntimeError('boom')\n", encoding="utf-8")
     (ext_dir / "not_a_package").mkdir()
-    monkeypatch.setenv("OFEP_EXTENSIONS", str(ext_dir))
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "s.json"))
+    monkeypatch.setenv("NASA95_EXTENSIONS", str(ext_dir))
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "s.json"))
     app = App()
     exts = {e["name"]: e for e in app.execute("extension.list")}
     assert set(exts) == {"hello_ext", "broken_ext"}
@@ -439,7 +439,7 @@ def test_SYS_22_extensions(tmp_path, monkeypatch):
     on = again.execute("extension.enable", name="hello_ext")
     assert on["enabled"] and again.execute("hello.count_materials")["count"] == 0
     assert again.execute("app.settings_get", key="disabled_extensions")["value"] is None
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         again.execute("extension.enable", name="nope")
     assert e.value.code == "not_found"
     # 새 확장을 나중에 넣으면 rescan 으로 찾는다
@@ -470,7 +470,7 @@ def test_SYS_23_folders(app):
     s = case.steps.create_static()
     own = app.execute("step.own_load_set", id=s.id)["id"]  # 하중은 셋 안에만 — 하중 폴더의 상위는 하중 셋
     lf = app.execute("folder.create", name="LOADS", kind="load", parent=own)["id"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("material.move", id=c.id, folder=lf)
     assert e.value.code == "invalid_param"
     ld = s.loads.create_force(target={"type": "nodes", "ids": [1]}, components=[1.0, 0.0, 0.0])
@@ -505,11 +505,11 @@ def test_SYS_24_command_preview(app):
     pv = app.execute("app.command_preview", command="mesh.nodes_create", params={"coords": [[0.0, 0.0, 0.0]]})
     assert pv["changes"]["mesh"] is True and app.execute("project.info")["nodes"] == 0
     # 실패하는 명령은 오류를 그대로 내고 아무것도 남기지 않는다
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("app.command_preview", command="material.create", params={"name": "steel"})
     assert e.value.code == "name_conflict" and (history_len(app), app.digest()["total"]) == before
     for cmd, code in [("app.undo", "not_available"), ("material.list", "not_available"), ("nope.x", "unknown_command")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("app.command_preview", command=cmd)
         assert e.value.code == code
 
@@ -536,10 +536,10 @@ def test_SYS_25_event_polling(app):
     app.model.materials.create(name="d")
     assert len(app.execute("event.subscribe", id=other["id"])["events"]) == 1
     for params in ({"id": s["id"]}, {"id": 99}):
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("event.subscribe", **params)
         assert e.value.code == "not_found"
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("event.unsubscribe", id=s["id"])
 
 
@@ -563,7 +563,7 @@ def test_SYS_26_extension_storage(app, tmp_path):
     app.execute("ext.storage_set", extension="x", key="k", value=None)
     assert app.execute("ext.storage_get", extension="x")["values"] == {"list": [1, 2]}
     assert app.execute("unit.get")["system"] == "mm-t-s"  # 같은 설정 객체의 다른 값은 그대로
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("ext.storage_set", extension="", key="k", value=1)
     assert e.value.code == "invalid_param"
 
@@ -592,13 +592,13 @@ def test_SYS_27_ext_register(app, tmp_path):
     assert r["name"] == "c" and len(app.execute("material.list")) == 3 and history_len(app) == n + 1
     app.undo()
     assert len(app.execute("material.list")) == 1
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("my.two_materials", first="x")
     assert e.value.code == "missing_param"
     for bad, code in [({"name": "my.count", "code": "def run(app, p): pass"}, "name_conflict"), ({"name": "bad name", "code": "x=1"}, "invalid_param"),
                       ({"name": "my.x"}, "missing_param"), ({"name": "my.x", "code": "def nope(): pass"}, "invalid_param"),
                       ({"name": "my.x", "code": "def run(:"}, "invalid_param")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("ext.register_command", desc="", **bad)
         assert e.value.code == code
     # UI 항목: 창이 없으면 등록만 되고 ext.registrations 에 나온다
@@ -619,13 +619,13 @@ def test_SYS_27_ext_register(app, tmp_path):
     app.undo()
     assert not {o["name"] for o in app.execute("material.list")} & {"p", "q"}
     assert app.execute("ext.registrations")["importers"] == [{"extension": ".cnt", "command": "my.import_cnt", "label": "재료 이름 목록", "ext_name": ""}]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("file.import", path="x.unknown")
     assert e.value.code == "not_available" and ".cnt" in e.value.details["available"] and ".step" in e.value.details["available"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("ext.register_exporter", extension="xyz", command="my.count")
     assert e.value.code == "invalid_param"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("ext.register_exporter", extension=".xyz", command="nope.cmd")
     assert e.value.code == "unknown_command"
     # 내보내기 형식: 내장 .inp 는 mesh.export
@@ -648,7 +648,7 @@ def test_SYS_27_ext_register(app, tmp_path):
     out = tmp_path / "r.txt"
     r = app.execute("report.generate", id=rep.id, path=str(out), format="txt")
     assert r["format"] == "txt" and out.read_text(encoding="utf-8") == "REPORT T"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("report.generate", id=rep.id, path=str(out), format="docx")
     assert e.value.code == "not_found"
     regs = app.execute("ext.registrations")
@@ -669,10 +669,10 @@ def test_SYS_28_file_upload_download(app, tmp_path):
     assert d["encoding"] == "base64" and base64.b64decode(d["base64"]) == raw
     assert base64.b64decode(app.execute("file.download", name="a.txt", encoding="base64")["base64"]) == "안녕\n".encode()
     for params, code in [({"name": "../x", "text": ""}, "invalid_param"), ({"name": "c.txt"}, "missing_param"), ({"name": "c.txt", "text": "", "base64": ""}, "missing_param")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("file.upload", **params)
         assert e.value.code == code
     for params, code in [({"name": "nope.txt"}, "io_error"), ({}, "missing_param"), ({"name": "b.bin", "encoding": "text"}, "invalid_param")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("file.download", **params)
         assert e.value.code == code

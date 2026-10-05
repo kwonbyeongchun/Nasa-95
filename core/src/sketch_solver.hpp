@@ -8,9 +8,9 @@
 #include <string>
 #include <vector>
 
-#include "ofep/model.hpp"
+#include "nasa95/model.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 struct SketchSolveResult {
   bool converged = false;      // 모든 잔차가 허용 오차 안
@@ -33,4 +33,4 @@ SketchSolveResult solve_sketch(Json& entities, const Json& constraints, bool ide
 // 구속의 점 지정({entity, point})이 가리키는 지금 좌표 [u, v]. fixed 구속의 at 을 만들 때 쓴다
 std::array<double, 2> sketch_point_position(const Json& entities, const Json& spec);
 
-}  // namespace ofep
+}  // namespace nasa95

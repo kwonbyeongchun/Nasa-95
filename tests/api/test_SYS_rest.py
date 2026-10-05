@@ -9,7 +9,7 @@ import urllib.request
 
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -41,9 +41,9 @@ def test_SYS_16_start_stop_auth(app, server):
     assert st["running"] and st["host"] == "127.0.0.1" and base.endswith("/api") and st["port"] > 0
     assert st["port"] != 8765  # port=0 은 빈 포트를 고른다(기본 8765 가 아니다)
     # 같은 포트에 두 번째 서버를 열 수 없다(Windows 는 주소 재사용을 켜면 조용히 bind 되어 요청을 가로챈다): 구조화된 오류
-    from openfep.api import App as _App
+    from nasa95.api import App as _App
     other = _App()
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         other.execute("server.start", port=st["port"])
     assert e.value.code == "port_in_use" and e.value.details["port"] == st["port"]
     assert call(base, None, "GET", "/version")[0] == 401  # 토큰 없음
@@ -53,7 +53,7 @@ def test_SYS_16_start_stop_auth(app, server):
     assert call(base, token, "GET", "/nothing")[0] == 404 and call(base, token, "GET", "/../x")[0] == 404
     app.execute("server.token_revoke", token=token)
     assert call(base, token, "GET", "/version")[0] == 401
-    with pytest.raises(OfepError) as e:  # 두 번 켤 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 두 번 켤 수 없다
         app.execute("server.start")
     assert e.value.code == "invalid_state"
     app.execute("server.stop")
@@ -101,7 +101,7 @@ def test_SYS_17_resources_and_commands(app, server):
 def test_SYS_18_openapi(app, server):
     base, token = server
     status, spec = call(base, token, "GET", "/openapi")
-    assert status == 200 and spec["openapi"].startswith("3.") and spec["info"]["title"] == "open-fep"
+    assert status == 200 and spec["openapi"].startswith("3.") and spec["info"]["title"] == "NASA-95"
     paths = spec["paths"]
     names = {c["name"] for c in app.commands()}
     assert all(f"/api/commands/{n}" in paths for n in names)  # 모든 명령이 명세에 있다
@@ -259,7 +259,7 @@ def test_SYS_17_05_06_token_scope(app, server):
     base, token = server
     ro = app.execute("server.token_create", scope="read")
     assert ro["scope"] == "read"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("server.token_create", scope="admin")
     assert e.value.code == "out_of_range"
     app.model.materials.create(name="STEEL")

@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 from meshutil import block, plate
@@ -305,7 +305,7 @@ def test_CAS_T03_loads(app):
     assert cl[0][1] == {"AMPLITUDE": "RAMP", "TIME DELAY": "0.5"} and cl[0][2] == [f"{n13}, 1, 1", f"{n13}, 2, 0", f"{n13}, 3, -2"]
     assert cl[1][2] == [f"{n13}, 4, 0", f"{n13}, 5, 3", f"{n13}, 6, 0"] and len(cl) == 2
     dl = [line for c in find(cards, "DLOAD") for line in c[2]]
-    internal = {tuple(c[2]): c[1]["ELSET"] for c in find(cards, "ELSET") if c[1]["ELSET"].startswith("OFEP_")}
+    internal = {tuple(c[2]): c[1]["ELSET"] for c in find(cards, "ELSET") if c[1]["ELSET"].startswith("NASA95_")}
     e12, e4 = "HALF", internal[("4",)]  # 내용이 같은 사용자 셋이 있으면 그것을 쓴다
     assert dl == [f"{e12}, P2, 2", f"{e4}, P4, 2", "BEAM, GRAV, 9810, 0, 0, -1", "HALF, CENTRIF, 100, 1, 2, 3, 0, 0, 1"]
     assert find(cards, "TEMPERATURE")[0][2] == [f"{n13}, 100"] and find(cards, "CFLUX")[0][2] == [f"{n13}, 11, 5"]
@@ -521,19 +521,19 @@ def test_CAS_T03_export_file_and_errors(app, tmp_path):
         ("case.export_deck", dict(id=case.id), "missing_param"),
         ("case.export_deck", dict(id=case.id, path=str(tmp_path / "none" / "x.inp")), "io_error"),
     ]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute(name, **params)
         assert e.value.code == code, (name, params)
     # CalculiX 에 없는 요소가 있으면 덱을 쓰지 않는다
     app.execute("mesh.elements_create", shape="pyramid5", connectivity=[[1, 2, 7, 6, 16]])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.preview_deck", id=case.id)
     assert e.value.code == "unsupported"
 
 
 @pytest.mark.feature("MSH-03")
 def test_MSH_T07_export_inp(app, tmp_path):
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.export", path=str(tmp_path / "empty.inp"))
     assert e.value.code == "invalid_state"
     part, b, mat, case = cantilever(app)
@@ -544,7 +544,7 @@ def test_MSH_T07_export_inp(app, tmp_path):
     assert (r["nodes"], r["elements"], r["format"]) == (30, 8, "inp")
     cards = parse(path.read_text())
     assert [c[0] for c in cards] == ["NODE", "ELEMENT", "NSET", "SURFACE"]  # 메시와 셋만
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.export", path=str(path), format="stl")
     assert e.value.code == "out_of_range"
 
@@ -689,7 +689,7 @@ def test_MSH_T07_import_errors(app, tmp_path):
         path = tmp_path / name
         path.write_text(text)
         before = total(app)
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.import", path=str(path))
         assert total(app) == before  # 실패하면 아무것도 남지 않는다
         return e.value
@@ -712,7 +712,7 @@ def test_MSH_T07_import_errors(app, tmp_path):
     assert attempt(node + "*INCLUDE, INPUT=nothing.inp\n").code == "io_error"
     assert attempt("*INCLUDE, INPUT=loop.inp\n", "loop.inp").code == "invalid_state"  # 자기 자신을 포함
     assert attempt("*MATERIAL, NAME=A\n").code == "invalid_state"  # 노드가 없다
-    with pytest.raises(OfepError) as err:
+    with pytest.raises(Nasa95Error) as err:
         app.execute("mesh.import", path=str(tmp_path / "none.inp"))
     assert err.value.code == "io_error"
 
@@ -1542,12 +1542,12 @@ def test_CAS_T01_15_load_sets_and_bc_sets(app):
     assert "no_load" not in codes and "unconstrained" not in codes
     # 계수를 곱할 수 없는 하중(각속도)에 계수 → 그 스텝의 하중 출력은 not_scalable 로 건너뜀
     L.loads.create_centrifugal(name="spin", target={"type": "parts", "ids": [part.id]}, omega=10.0, axis_point=[0, 0, 0], axis_direction=[0, 0, 1])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("step.effective", id=s1.id)
     assert e.value.code == "not_scalable"
     app.undo()
     # 스텝이 참조하는 셋은 지울 수 없다(referenced). 참조를 먼저 풀면 지워진다
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         D.delete()
     assert e.value.code == "referenced"
     s1.update(load_sets=[{"set": L.id, "factor": 1.6}])

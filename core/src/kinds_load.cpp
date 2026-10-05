@@ -2,7 +2,7 @@
 // 하중·경계조건은 스텝이 소유한다(스텝 아래에 직접 둔다). 초기 조건은 스텝과 무관한 모델 정의다.
 #include "kinds.hpp"
 
-namespace ofep::kinds {
+namespace nasa95::kinds {
 
 namespace {
 
@@ -260,4 +260,4 @@ void register_load(Schema& s) {
   }
 }
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds

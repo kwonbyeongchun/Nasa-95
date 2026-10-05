@@ -4,7 +4,7 @@ import pytest
 
 from conftest import history_len
 from test_VIEW_render import _available
-from openfep import App
+from nasa95 import App
 
 pytestmark = pytest.mark.skipif(not _available(), reason="Vulkan 필요")
 TARGETS = {

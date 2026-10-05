@@ -6,8 +6,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPointF, QEvent, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QApplication
-from openfep import App
-from openfep.ui.viewport import Viewport
+from nasa95 import App
+from nasa95.ui.viewport import Viewport
 
 
 @pytest.mark.feature("RND-09")

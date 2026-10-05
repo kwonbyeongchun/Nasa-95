@@ -11,11 +11,12 @@
 #include <set>
 #include <sstream>
 
-#include "ofep/app.hpp"
-#include "ofep/error.hpp"
-#include "ofep/expr.hpp"
+#include "nasa95/app.hpp"
+#include "nasa95/solver.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/expr.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -268,15 +269,22 @@ Json beam_section_values(const Object& o) {
   const std::string s = o.props["section"].get<std::string>();
   const std::vector<double> d = o.props["dimensions"].get<std::vector<double>>();
   const double pi = 3.14159265358979323846;
-  double area = 0, i11 = 0, i22 = 0;  // i11: 1축 둘레, i22: 2축 둘레
+  double area = 0, i11 = 0, i22 = 0, j = 0;  // i11: 1축 둘레, i22: 2축 둘레, j: 비틀림 상수(Saint-Venant)
+  // 직사각형(긴 변 a, 짧은 변 b)의 비틀림 상수(Roark 근사, 오차 < 1%)
+  auto rect_j = [](double a, double b) {
+    if (a < b) std::swap(a, b);
+    return a * std::pow(b, 3) * (1.0 / 3 - 0.21 * (b / a) * (1 - std::pow(b, 4) / (12 * std::pow(a, 4))));
+  };
   if (s == "rect") {  // d = [1방향 두께 a, 2방향 두께 b]
-    area = d[0] * d[1], i11 = d[0] * std::pow(d[1], 3) / 12, i22 = d[1] * std::pow(d[0], 3) / 12;
-  } else if (s == "circ") {  // d = [1방향 지름, 2방향 지름] (타원)
+    area = d[0] * d[1], i11 = d[0] * std::pow(d[1], 3) / 12, i22 = d[1] * std::pow(d[0], 3) / 12, j = rect_j(d[0], d[1]);
+  } else if (s == "circ") {  // d = [1방향 지름, 2방향 지름] (타원): J = π a³b³/(a²+b²)
     area = pi * d[0] * d[1] / 4, i11 = pi * d[0] * std::pow(d[1], 3) / 64, i22 = pi * d[1] * std::pow(d[0], 3) / 64;
+    const double ea = d[0] / 2, eb = d[1] / 2;
+    j = pi * std::pow(ea, 3) * std::pow(eb, 3) / (ea * ea + eb * eb);
   } else if (s == "pipe") {  // d = [바깥 반지름, 두께]
     const double r = d[0] - d[1];
     if (r < 0) throw Error("out_of_range", "파이프 두께가 반지름보다 큽니다", {{"object", o.id}});
-    area = pi * (d[0] * d[0] - r * r), i11 = i22 = pi * (std::pow(d[0], 4) - std::pow(r, 4)) / 4;
+    area = pi * (d[0] * d[0] - r * r), i11 = i22 = pi * (std::pow(d[0], 4) - std::pow(r, 4)) / 4, j = 2 * i11;
   } else if (s == "box") {  // d = [a, b, t1, t2, t3, t4]: t1·t3 는 ±1방향, t2·t4 는 ±2방향 벽 두께
     const double a = d[0], b = d[1], ai = a - d[2] - d[4], bi = b - d[3] - d[5];
     if (ai <= 0 || bi <= 0) throw Error("out_of_range", "박스 벽 두께가 바깥 치수보다 큽니다", {{"object", o.id}});
@@ -286,10 +294,28 @@ Json beam_section_values(const Object& o) {
     const double c1 = -ah * e1 / area, c2 = -ah * e2 / area;  // 단면 도심
     i11 = a * std::pow(b, 3) / 12 + ao * c2 * c2 - (ai * std::pow(bi, 3) / 12 + ah * (e2 - c2) * (e2 - c2));
     i22 = b * std::pow(a, 3) / 12 + ao * c1 * c1 - (bi * std::pow(ai, 3) / 12 + ah * (e1 - c1) * (e1 - c1));
+    // 닫힌 얇은 벽(Bredt): J = 4 A_m² / Σ(s/t). 벽 두께 0 인 쪽(열린 단면)이 있으면 열린 단면 식(Σ bt³/3)
+    const double am = a - (d[2] + d[4]) / 2, bm = b - (d[3] + d[5]) / 2;
+    if (d[2] > 0 && d[3] > 0 && d[4] > 0 && d[5] > 0) j = 4 * std::pow(am * bm, 2) / (bm / d[2] + am / d[3] + bm / d[4] + am / d[5]);
+    else for (const BeamRect& r : beam_section_rects(s, d)) j += std::max(r.t1, r.t2) * std::pow(std::min(r.t1, r.t2), 3) / 3;
+  } else if (beam_section_composite(s)) {  // 형강(D15): 부분 직사각형의 합, 도심 기준(평행축 정리). J 는 열린 얇은 벽 식 Σ bt³/3
+    const std::vector<BeamRect> rects = beam_section_rects(s, d);
+    double g1 = 0, g2 = 0;
+    for (const BeamRect& r : rects) area += r.t1 * r.t2, g1 += r.t1 * r.t2 * r.c1, g2 += r.t1 * r.t2 * r.c2;
+    g1 /= area, g2 /= area;
+    for (const BeamRect& r : rects) {
+      const double A = r.t1 * r.t2;
+      i11 += r.t1 * std::pow(r.t2, 3) / 12 + A * (r.c2 - g2) * (r.c2 - g2);
+      i22 += r.t2 * std::pow(r.t1, 3) / 12 + A * (r.c1 - g1) * (r.c1 - g1);
+      j += std::max(r.t1, r.t2) * std::pow(std::min(r.t1, r.t2), 3) / 3;
+    }
+    const auto [H, B] = beam_section_extent(s, d);
+    return Json{{"section", s}, {"area", area}, {"i11", i11}, {"i22", i22}, {"j", j}, {"centroid", {g1, g2}}, {"extent", {H, B}}, {"parts", rects.size()},
+                {"note", "도심은 외접 상자 중심(기준선) 기준의 1·2축 위치. 덱에는 직사각형 부분 단면의 합성보로 나간다. j 는 열린 얇은 벽 근사(Σbt³/3)"}};
   } else {  // general: [A, I11, I12, I22, 전단 계수]
     return Json{{"section", s}, {"area", d[0]}, {"i11", d[1]}, {"i12", d[2]}, {"i22", d[3]}, {"shear_factor", d[4]}};
   }
-  return Json{{"section", s}, {"area", area}, {"i11", i11}, {"i22", i22}};
+  return Json{{"section", s}, {"area", area}, {"i11", i11}, {"i22", i22}, {"j", j}};
 }
 
 // ------------------------------------------------------------------ 케이스 검사
@@ -522,6 +548,54 @@ Json check_case(const App& a, const Object& cs) {
     }
     if (p->name.size() > 4) issues.push_back(issue("error", "name_too_long", *p, "name", "부분구조 이름은 4자 이내여야 합니다"));
   }
+  // 보 단면 1축 방향(PRP-07): 주지 않으면 솔버 기본 (0,0,-1) 로 나간다. 요소 축과 나란한 1축(기본값을 쓴 수직 부재가 흔한 경우)은 솔버가
+  // 단면을 펼치지 못해 실패하므로 오류로 잡는다. 요소별 방향(mesh.set_beam_direction)이 있으면 그것을 본다
+  {
+    const Mesh& m = a.mesh();
+    const Object* settings = a.find_settings();
+    std::map<Id, std::array<double, 3>> per_elem;
+    if (settings)
+      for (const Json& row : settings->props.value("beam_directions", Json::array()))
+        per_elem[row[0].get<Id>()] = {row[1].get<double>(), row[2].get<double>(), row[3].get<double>()};
+    for (const Object* p : a.model().by_kind("property")) {
+      if (p->suppressed || subtype_of(*p) != "beam" || !has(p->props, "target")) continue;
+      const bool given = has(p->props, "direction");
+      std::array<double, 3> dir{0, 0, -1};
+      if (given) for (int k = 0; k < 3; ++k) dir[k] = p->props["direction"][static_cast<std::size_t>(k)].get<double>();
+      Json elems;
+      try {
+        elems = resolve_target(a, p->props["target"], "elements");
+      } catch (const Error&) {
+        continue;
+      }
+      int parallel = 0;
+      Id first = 0;
+      for (const Json& ej : elems) {
+        const Id eid = ej.get<Id>();
+        if (!m.has_element(eid)) continue;
+        const Element e = m.element(eid);
+        if (shape_info(e.shape).dim != 1 || e.nodes.size() < 2) continue;
+        std::array<double, 3> d = per_elem.count(eid) ? per_elem[eid] : dir;
+        const auto p0 = m.node(e.nodes[0]), p1 = m.node(e.nodes[1]);
+        std::array<double, 3> ax{p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]};
+        const double la = std::sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]), ld = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+        if (la <= 0 || ld <= 0) continue;
+        const double cross2 = std::pow(ax[1] * d[2] - ax[2] * d[1], 2) + std::pow(ax[2] * d[0] - ax[0] * d[2], 2) + std::pow(ax[0] * d[1] - ax[1] * d[0], 2);
+        if (std::sqrt(cross2) / (la * ld) < 1e-6) {
+          if (!parallel) first = eid;
+          ++parallel;
+        }
+      }
+      if (parallel)
+        issues.push_back(issue("error", "beam_direction_parallel", *p, "direction",
+                               "단면 1축 방향이 보 요소의 축과 나란합니다(요소 " + std::to_string(parallel) + "개, 예: " + std::to_string(first) + ")" +
+                                   (given ? "" : " — 방향을 주지 않아 솔버 기본 (0,0,-1) 이 쓰였습니다(수직 부재)") + ". 보 축에 수직인 방향을 주십시오"));
+      else if (!given)
+        issues.push_back(issue("warning", "beam_direction_default", *p, "direction", "단면 1축 방향을 주지 않아 솔버 기본 (0,0,-1) 로 나갑니다. 단면이 비대칭이면 방향을 확인하십시오"));
+    }
+  }
+  // 솔버 지원 범위(solver.hpp 기능 표): 이 케이스의 솔버가 지원하지 않는 정의
+  for (const Json& i : solver_support_issues(a, cs)) issues.push_back(i);
   if (steps.empty()) issues.push_back(issue("incomplete", "no_step", cs, "", "스텝이 없습니다"));
   return issues;
 }
@@ -666,6 +740,10 @@ std::vector<Id> case_order(const App& a) {
 }
 
 }  // namespace
+
+Json beam_section_properties(const Object& property) { return beam_section_values(property); }
+
+Json beam_section_constants(const Object& beam_property) { return beam_section_values(beam_property); }
 
 void register_model_commands(App& app) {
   // ---------------------------------------------------------------- 하중·경계조건의 설정 명령
@@ -981,6 +1059,26 @@ void register_model_commands(App& app) {
     CommandSpec c = base("property.section_values", 'Q', "property", "보 단면 상수 계산 결과를 조회한다", "PRP-05");
     c.params = {F("id", "ref", "프로퍼티").call_req()};
     c.fn = [](App& a, const Json& p) { return beam_section_values(of_kind(a.model(), p["id"].get<Id>(), "property")); };
+    app.register_command(std::move(c));
+  }
+  {
+    CommandSpec c = base("property.section_shape", 'Q', "property",
+                         "보 단면의 모양: 부분 직사각형(1·2축 두께 t1·t2 와 외접 상자 중심 기준 위치 c1·c2)과 외접 상자 크기. 형강(I·T·L·C)은 합성보로 분해한 부분들(D15). "
+                         "프로퍼티 없이 종류·치수만으로 조회할 수 있어 창의 단면 미리보기가 쓴다",
+                         "PRP-05");
+    c.params = {F("section", "string", "단면 종류").call_req().one_of({"rect", "circ", "pipe", "box", "general", "I", "T", "L", "C"}).ex("I"),
+                F("dimensions", "number_list", "단면 치수(종류별 개수: rect·circ·pipe 2, box 6, general 5, I·T·L·C 4 = h, b, tw, tf)").call_req().gt(0).ex({100.0, 60.0, 6.0, 8.0})};
+    c.fn = [](App& a, const Json& p) {
+      const std::string s = p["section"].get<std::string>();
+      check_value(a.commands().at("property.section_shape").params[0], p["section"], nullptr);
+      const std::vector<double> d = p["dimensions"].get<std::vector<double>>();
+      if (static_cast<int>(d.size()) != beam_section_dims(s))
+        throw Error("invalid_param_type", "이 단면 종류의 치수는 " + std::to_string(beam_section_dims(s)) + "개여야 합니다", {{"param", "dimensions"}});
+      Json rects = Json::array();
+      for (const BeamRect& r : beam_section_rects(s, d)) rects.push_back(Json{{"t1", r.t1}, {"t2", r.t2}, {"c1", r.c1}, {"c2", r.c2}});
+      const auto [H, B] = beam_section_extent(s, d);
+      return Json{{"section", s}, {"composite", beam_section_composite(s)}, {"rects", rects}, {"extent", {H, B}}};
+    };
     app.register_command(std::move(c));
   }
 
@@ -1400,4 +1498,4 @@ double unit_factor(const std::string& from, const std::string& to, const std::st
          std::pow(a->second.time / b->second.time, d->second[2]);
 }
 
-}  // namespace ofep
+}  // namespace nasa95

@@ -1,11 +1,11 @@
-#include "ofep/model.hpp"
+#include "nasa95/model.hpp"
 
 #include <algorithm>
 #include <cstdio>
 
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 Json Object::to_json() const {
   return Json{{"id", id},       {"kind", kind},           {"name", name},  {"parent", parent},
@@ -143,12 +143,13 @@ void Model::clear() {
 Json Model::to_json() const {
   Json arr = Json::array();
   for (const auto& [id, o] : objs_) arr.push_back(o.to_json());
-  return Json{{"format", "open-fep"}, {"version", 1}, {"next_id", next_}, {"objects", arr}};
+  return Json{{"format", "NASA-95"}, {"version", 1}, {"next_id", next_}, {"objects", arr}};
 }
 
 void Model::load_json(const Json& j) {
-  if (!j.is_object() || j.value("format", std::string()) != "open-fep")
-    throw Error("invalid_file", "open-fep 프로젝트 파일이 아닙니다");
+  const std::string fmt = j.is_object() ? j.value("format", std::string()) : std::string();
+  if (fmt != "NASA-95" && fmt != "open-fep")  // open-fep: 개명(2026-10-05) 전에 저장한 프로젝트
+    throw Error("invalid_file", "NASA-95 프로젝트 파일이 아닙니다");
   std::map<Id, Object> objs;
   for (const Json& jo : j.at("objects")) {
     Object o = Object::from_json(jo);
@@ -189,4 +190,4 @@ Json Model::digest() const {
   return Json{{"total", fnv1a_hex(all.dump())}, {"areas", areas}};
 }
 
-}  // namespace ofep
+}  // namespace nasa95

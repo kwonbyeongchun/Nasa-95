@@ -3,9 +3,9 @@
 #include <cmath>
 
 #include "kinds.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep::kinds {
+namespace nasa95::kinds {
 
 namespace {
 
@@ -154,4 +154,4 @@ void register_common(Schema& s) {
   }
 }
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds

@@ -4,7 +4,7 @@
 """
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import total
 from meshutil import block, plate
@@ -320,18 +320,18 @@ def test_CAS_T04_import_rules(app, tmp_path):
     r = app.execute("deck.import", path=str(path))
     # 스텝이 없으면 모델 수준의 경계조건은 보존한다
     assert [(p["keyword"], p["reason"]) for p in r["preserved"]] == [("BOUNDARY", "no_step")] and "step" not in r["created"]
-    with pytest.raises(OfepError) as e:  # 메시가 있는 모델에는 가져오지 않는다
+    with pytest.raises(Nasa95Error) as e:  # 메시가 있는 모델에는 가져오지 않는다
         app.execute("deck.import", path=str(path))
     assert e.value.code == "invalid_state"
     app.undo()
     assert total(app) == before
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("deck.import", path=str(tmp_path / "none.inp"))
     assert e.value.code == "io_error"
     path.write_text("*NODE\n1, 0, 0, 0\n*STEP\n*STATIC\n")  # *END STEP 이 없다
     r = app.execute("deck.import", path=str(path))
     assert [(p["keyword"], p["reason"]) for p in r["preserved"]] == [("STEP", "parse_error")]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("deck_block.create", parent=r["case"])  # 내용이 없는 보존 블록은 만들 수 없다
     assert e.value.code == "missing_param"
 
@@ -512,7 +512,7 @@ def test_CAS_T04_transform_rules(app, tmp_path):
     assert reasons == {a.id: "transform_conflict", b.id: "transform_conflict", c.id: "transform_conflict", d.id: "transform_type"}
     cards = parse(r["text"])
     assert [c[2] for c in cards if c[0] == "TRANSFORM"] == [["0, 1, 0, -1, 0, 0"]]  # 남은 객체(e)의 노드 4 만 변환한다
-    assert [c[2] for c in cards if c[0] == "NSET" and c[1]["NSET"] == "OFEP_N1"] == [["4"]]
+    assert [c[2] for c in cards if c[0] == "NSET" and c[1]["NSET"] == "NASA95_N1"] == [["4"]]
     # 셋으로 적은 구속식
     deck = tmp_path / "eq.inp"
     deck.write_text("*NODE, NSET=NALL\n1, 0., 0., 0.\n2, 1., 0., 0.\n3, 2., 0., 0.\n4, 3., 0., 0.\n*ELEMENT, TYPE=T3D2, ELSET=E1\n1, 1, 2\n2, 2, 3\n3, 3, 4\n"
@@ -540,6 +540,6 @@ def test_CAS_T04_split_deck(app, tmp_path):
     other = App()
     imported = other.execute("deck.import", path=str(tmp_path / "b" / "job.inp"))
     assert imported["preserved"] == [] and (imported["nodes"], imported["elements"]) == (app.execute("project.info")["nodes"], app.execute("project.info")["elements"])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("case.export_deck", id=case.id, path=str(tmp_path / "b" / "한글 이름.inp"), split=True)
     assert e.value.code == "invalid_param"

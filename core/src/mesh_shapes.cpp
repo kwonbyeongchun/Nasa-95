@@ -2,10 +2,10 @@
 // 솔버 요소 타입 이름과 면 번호는 CalculiX 2.22 매뉴얼(6.2 Element Types, *DLOAD 의 면 번호)을 따른다.
 #include <cmath>
 
-#include "ofep/error.hpp"
-#include "ofep/mesh.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/mesh.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 const std::vector<ShapeInfo>& all_shapes() {
   static const std::vector<ShapeInfo> v = {
@@ -138,9 +138,9 @@ double element_size(const ShapeInfo& info, const std::vector<Vec3>& p) {
   return 0.0;
 }
 
-}  // namespace ofep
+}  // namespace nasa95
 
-namespace ofep {
+namespace nasa95 {
 
 std::vector<double> interpolate_points(const std::vector<Vec3>& points, const std::vector<double>& values, const std::vector<Vec3>& at,
                                        const std::string& method, double power, double radius) {
@@ -173,4 +173,4 @@ std::vector<double> interpolate_points(const std::vector<Vec3>& points, const st
   return out;
 }
 
-}  // namespace ofep
+}  // namespace nasa95

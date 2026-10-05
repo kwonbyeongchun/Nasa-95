@@ -9,9 +9,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication, QToolBar, QToolButton
-from openfep import App
-from openfep.ui import MainWindow
-from openfep.ui.ribbon import saribbon
+from nasa95 import App
+from nasa95.ui import MainWindow
+from nasa95.ui.ribbon import saribbon
 
 
 @pytest.fixture
@@ -25,6 +25,41 @@ def window():
 
 def branch(w, kind):
     return next(w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount()) if w.tree.topLevelItem(i).text(1) == kind)
+
+
+@pytest.mark.feature("CAS-01")
+@pytest.mark.parametrize("entry", ["double_click", "edit"])
+def test_CAS_T01_23_existing_case_edit_opens_two_trees(window, entry):
+    from nasa95.ui.case_dialog import CaseDialog
+    from nasa95.ui.case_tree import CaseTree
+    w, qt = window
+    case = w.app.model.cases.create(name="wind_1.2D_1.0W", threads=3, work_directory="case-work")
+    load = w.app.model.load_sets.create(name="Wind")
+    bc = w.app.model.bc_sets.create(name="Fixed")
+    case.steps.create_static(load_sets=[{"set": load.id, "factor": 1.2}], bc_sets=[bc.id])
+    before = w.app.digest()
+    w.refresh()
+    item = branch(w, "case").child(0)
+    w.tree.setCurrentItem(item)
+    w._selected = ("case", case.id)
+    seen = []
+    def inspect_dialog():
+        dlg = QApplication.activeModalWidget()
+        try:
+            if isinstance(dlg, CaseDialog):
+                seen.append((len(dlg.findChildren(CaseTree)), dlg.available_tree.isVisible(), dlg.included_tree.isVisible(),
+                             dlg._case["id"], dlg.selected_load_sets(), dlg.selected_bc_sets(), dlg.details.isHidden(),
+                             dlg.case_editors["threads"].value()))
+        finally:
+            if dlg:
+                dlg.reject()
+    QTimer.singleShot(0, inspect_dialog)
+    if entry == "double_click":
+        w.tree.itemDoubleClicked.emit(item, 0)
+    else:
+        w._edit_selected()  # 메뉴·우클릭 편집·Enter도 같은 연결을 사용한다.
+    assert seen == [(2, True, True, case.id, [{"set": load.id, "factor": 1.2}], [bc.id], True, 3)]
+    assert w.app.digest() == before
 
 
 @pytest.mark.feature("RND-36")
@@ -52,6 +87,72 @@ def test_RND_T03_25_ribbon_number_label_toggles(window):
     w.app.execute("project.new")
     qt.processEvents()
     assert not node.isChecked() and not element.isChecked()
+
+
+@pytest.mark.feature("RND-21")
+def test_RND_T01_48_ribbon_mesh_shrink(window):
+    w, qt = window
+    w.show()
+    qt.processEvents()
+    action = w._shrink_action
+    assert action.isCheckable() and not action.isChecked()
+    w._shrink_presets[20].trigger()
+    assert w.app.execute("view.mesh_options_get")["shrink"] == 0.2
+    assert all(button.isChecked() for button in w._shrink_buttons)
+    w._shrink_presets[40].trigger()
+    for button in w._shrink_buttons:
+        assert button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
+        button.click()
+        assert w.app.execute("view.mesh_options_get")["shrink"] == 0.0
+        assert not action.isChecked()
+        button.click()
+        assert w.app.execute("view.mesh_options_get")["shrink"] == 0.4
+    w.app.execute("view.mesh_options", edges=False, solid_1d_2d=True, shrink=0.3)
+    w.viewport.present()
+    assert action.isChecked() and w._shrink_presets[30].isChecked()
+    for mode in ("dark", "light"):
+        w.theme.set_mode(mode)
+        action.trigger()
+        action.trigger()
+        assert w.app.execute("view.mesh_options_get") == {"edges": False, "shrink": 0.3, "solid_1d_2d": True, "beam_axes": False}
+    menu = action.menu()
+    opened = []
+    def close_popup():
+        opened.append(menu.isVisible())
+        menu.close()
+    QTimer.singleShot(100, close_popup)
+    w._shrink_buttons[0].showMenu()
+    assert opened == [True]
+
+
+@pytest.mark.feature("RND-21")
+@pytest.mark.feature("RND-22")
+def test_RND_T01_49_ribbon_mesh_solid_toggle(window):
+    """보·쉘 입체 표시 토글: 기본 끔(선·면), 켜면 solid_1d_2d, 명령으로 바꾼 값도 버튼에 비친다. 다른 옵션은 건드리지 않는다."""
+    w, qt = window
+    w.show()
+    qt.processEvents()
+    action = w._solid_action
+    assert action.isCheckable() and not action.isChecked()
+    assert w.app.execute("view.mesh_options_get")["solid_1d_2d"] is False
+    before = w.app.digest()
+    w.app.execute("view.mesh_options", shrink=0.3)
+    action.trigger()
+    assert w.app.execute("view.mesh_options_get") == {"edges": True, "shrink": 0.3, "solid_1d_2d": True, "beam_axes": False} and action.isChecked()
+    action.trigger()
+    assert w.app.execute("view.mesh_options_get")["solid_1d_2d"] is False and not action.isChecked()
+    w.app.execute("view.mesh_options", solid_1d_2d=True)
+    w.viewport.present()
+    assert action.isChecked()
+    assert w.app.digest() == before  # 표시 옵션은 모델을 바꾸지 않는다
+    # 보 1축 방향 표식 토글(PRP-07)
+    axes = w._axes_action
+    assert axes.isCheckable() and not axes.isChecked()
+    axes.trigger()
+    assert w.app.execute("view.mesh_options_get")["beam_axes"] is True and axes.isChecked()
+    w.app.execute("view.mesh_options", beam_axes=False)
+    w.viewport.present()
+    assert not axes.isChecked() and w.app.digest() == before
 
 
 def test_UI_saribbon_titlebar_theme_and_window_controls(window):
@@ -243,3 +344,35 @@ def test_UI_panel_visibility_and_view_background(window):
     image, _ = w.app.view.render(240, 180)
     assert tuple(image[0, 0, :3]) == (255, 255, 255)
     w._set_view_background("theme")
+
+
+@pytest.mark.feature("API-26")
+@pytest.mark.feature("API-35")
+def test_UI_rest_status_button_and_dialog(window, monkeypatch):
+    """상태 표시줄 오른쪽의 'REST OFF/ON'(모델·NASA-95·Vulkan 과 같은 글자 모양): 클릭하면 켜지며 주소·토큰 대화 상자가 뜨고, 다시 클릭하면 꺼진다.
+    대화 상자의 한 줄 복사는 'REST <url> token=<토큰>'. 명령으로 켜고 끄면 글자가 따라간다."""
+    from nasa95.ui import rest_dialog
+    from nasa95.ui.rest_dialog import RestDialog
+    w, qt = window
+    btn = w.rest_button
+    assert btn.text() == "REST OFF" and btn.property("on") == "false"
+    assert btn.parent() is w.statusBar() and btn.x() > w.statusBar().width() // 2  # 오른쪽(영구 위젯)
+    w.app.execute("server.configure", port=0)  # 빈 포트
+    opened = []
+    monkeypatch.setattr(RestDialog, "exec", lambda self: opened.append(self.one_line_text()) or 0)
+    btn.toggle()  # 클릭 = 켜기 → 대화 상자
+    st = w.app.execute("server.status")
+    assert st["running"] and btn.text() == "REST ON" and btn.property("on") == "true"
+    assert opened and opened[0] == f"REST {st['url']} token={rest_dialog.full_token(w.app)}" and rest_dialog.full_token(w.app) in w.app.rest.tokens
+    dlg = RestDialog(w.app, parent=w)
+    assert dlg.state.text() == "켜짐" and dlg.url.text() == st["url"] and dlg.port.value() == st["port"] and dlg.one_line.isEnabled()
+    dlg._copy_line()
+    assert QApplication.clipboard().text() == dlg.one_line_text()
+    btn.toggle()  # 클릭 = 끄기(대화 상자 없음)
+    assert not w.app.execute("server.status")["running"] and btn.text() == "REST OFF" and len(opened) == 1
+    w.app.execute("server.start")
+    w._after_remote_command("server.start")
+    assert btn.text() == "REST ON"
+    w.app.execute("server.stop")
+    w._after_remote_command("server.stop")
+    assert btn.text() == "REST OFF"

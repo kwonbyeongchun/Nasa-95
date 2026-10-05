@@ -158,7 +158,7 @@ def ui(window):
         def finish(self):
             if not self.sketch:
                 return
-            from openfep.ui.forms import CommandDialog
+            from nasa95.ui.forms import CommandDialog
             sk = self.sketch
             self.active = False
             profiles = app.execute("sketch.profiles", id=sk)

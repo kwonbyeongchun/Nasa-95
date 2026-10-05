@@ -19,10 +19,10 @@
 #endif
 #include <vulkan/vulkan.h>
 
-#include "ofep/error.hpp"
-#include "ofep/render.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/render.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -96,7 +96,7 @@ struct Renderer::Impl {
 
   void init() {
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    app.pApplicationName = "open-fep";
+    app.pApplicationName = "NASA-95";
     app.apiVersion = VK_API_VERSION_1_1;
     // 창에 그리기 위한 확장(있을 때만)
     std::uint32_t ext_n = 0;
@@ -882,4 +882,4 @@ Json Renderer::info() const {
               {"last_frame", impl_->last}};
 }
 
-}  // namespace ofep
+}  // namespace nasa95

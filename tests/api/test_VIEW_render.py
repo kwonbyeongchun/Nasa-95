@@ -10,7 +10,7 @@ import zlib
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -22,7 +22,7 @@ def _available():
     try:
         app.execute("view.diagnostics")
         return True
-    except OfepError:
+    except Nasa95Error:
         return False
 
 
@@ -115,7 +115,7 @@ def test_RND_T03_24_number_labels_follow_mesh_and_reset(app):
     assert app.execute("view.labels_get")["node_count"] == 1
     assert app.execute("view.labels_get")["element_count"] == 0
     state = app.execute("view.labels_get")
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.labels", all_nodes="invalid")
     assert app.execute("view.labels_get") == state
     # 기존 목록 지정/무인자 지우기 계약을 유지한다.
@@ -202,10 +202,10 @@ def test_VIEW_T02_camera(app):
     assert not mask[0].any() and not mask[-1].any() and extent(mask)[1] > 0.5 * H
     for params, code in [(dict(eye=[1.0, 1.0, 1.0], target=[1.0, 1.0, 1.0]), "out_of_range"), (dict(fov=0.0), "out_of_range"),
                          (dict(projection="fisheye"), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.camera_set", **params)
         assert e.value.code == code
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.standard", name="diagonal")
     assert e.value.code == "out_of_range"
 
@@ -241,7 +241,7 @@ def test_VIEW_T03_pick_geometry(app):
     centers = sorted(tuple(app.execute("geometry.entity_info", id=p.id, type="face", index=i)["center"]) for i in seen)
     assert centers == [(5.0, 0.0, 15.0), (5.0, 10.0, 30.0), (10.0, 10.0, 15.0)]  # 카메라 쪽(+x, −y, +z)을 향한 세 면
     for params, code in [(dict(x=W, y=0), "out_of_range"), (dict(x=0, y=0, width=0), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.pick", **{"width": W, "height": H, **params})
         assert e.value.code == code
 
@@ -275,7 +275,7 @@ def test_VIEW_T04_mesh_and_modes(app):
     wire, wire_ids = app.view.render(W, H)
     assert 0 < drawn(wire).sum() < 0.2 * drawn(rgba).sum() and np.all(wire_ids == 0)
     assert app.execute("view.display_mode") == {"mode": "wireframe", "show": "auto"}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.display_mode", mode="xray")
     assert e.value.code == "out_of_range"
     # 쉘: 뒤에서 보면 뒷면 색이 섞인다(법선 확인용)
@@ -300,7 +300,7 @@ def test_VIEW_T05_result_contour(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(20, 2, 2))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static()
@@ -342,7 +342,7 @@ def test_VIEW_T05_result_contour(app, tmp_path, monkeypatch):
     for params, code in [(dict(result=99), "not_found"), (dict(result=rid, field="NOPE", component="x"), "not_found"),
                          (dict(result=rid, field="DISP", component="mises"), "not_found"), (dict(result=rid, field="DISP"), "missing_param"),
                          (dict(result=rid, frame=9), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.result_show", **params)
         assert e.value.code == code, params
 
@@ -368,7 +368,7 @@ def test_VIEW_T05_screenshot(app, tmp_path):
     assert read_png(path / "big.png").shape == (2000, 3000, 4) and big["lines"] > 0
     for params, code in [(dict(path=str(path / "x.png"), width=0), "out_of_range"), (dict(path=str(path / "x.png"), height=100000), "out_of_range"),
                          (dict(), "missing_param"), (dict(path=str(tmp_path / "none" / "x.png")), "io_error")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.screenshot", **params)
         assert e.value.code == code, params
 
@@ -397,7 +397,7 @@ def test_VIEW_T03_highlight(app):
     assert app.execute("view.highlight", clear=True)["count"] == 0
     assert np.array_equal(app.view.render(W, H)[0], plain)
     for params, code in [(dict(kind="face"), "missing_param"), (dict(kind="element_face"), "missing_param"), (dict(kind="node"), "out_of_range")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.highlight", **params)
         assert e.value.code == code
 
@@ -416,12 +416,13 @@ def test_VIEW_T04_load_bc_symbols(app):
     s.loads.create_pressure(target={"type": "faces", "ids": [[e, 2] for e in range(31, 41)]}, value=1.0)
     app.execute("view.standard", name="front")
     plain = app.view.render(W, H)[0]
-    base_lines = app.execute("view.diagnostics")["last_frame"]["lines"]
+    base_frame = app.execute("view.diagnostics")["last_frame"]
     assert app.execute("view.symbols", step=s.id)["shown"] is True
     rgba = app.view.render(W, H)[0]
     d = app.execute("view.diagnostics")["last_frame"]
-    # 힘 9개(절점) + 압력 10개(면) = 화살표 19개 × 3선, 구속 9절점 × 3자유도 = 27선
-    assert d["lines"] == base_lines + 19 * 3 + 27
+    # 힘 9개 + 압력 10개. 원통·원뿔의 16개 둘레 구간마다 6삼각형(몸통·마개·고리·화살촉).
+    assert d["lines"] == base_frame["lines"]
+    assert d["triangles"] == base_frame["triangles"] + 19 * 16 * 6
     red = (rgba[:, :, 0] > 150) & (rgba[:, :, 1] < 80) & (rgba[:, :, 2] < 80)
     blue = (rgba[:, :, 2] > 150) & (rgba[:, :, 0] < 80)
     ys, xs = np.nonzero(drawn(plain))
@@ -430,7 +431,7 @@ def test_VIEW_T04_load_bc_symbols(app):
     # 압력 화살표는 윗면 위(모델보다 위쪽 = 작은 y)에 있다
     assert np.nonzero(red)[0].min() < ys.min()
     assert app.execute("view.symbols")["shown"] is False and np.array_equal(app.view.render(W, H)[0], plain)
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.symbols", step=root.id)
     assert e.value.code == "wrong_kind"
 
@@ -471,13 +472,13 @@ def test_VIEW_T06_hud_triad_text_legend(app, tmp_path, monkeypatch):
     assert xs.min() >= 10 and xs.max() < 10 + 15 and ys.min() >= 10 and ys.max() < 10 + 21 and len(xs) >= 7 * 3 * 3
     app.execute("view.hud", labels=[])
     assert not np.all(app.view.render(W, H)[0][:60, :60, :3] < 100, axis=2).any()
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.hud", labels=[{"x": 1}])  # text 가 없다
     # 범례: 결과를 입히면 오른쪽에 색띠(아래 파랑 → 위 빨강)와 글자가 생긴다
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     app.execute("project.new")
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(10, 2, 2))
     case.update(work_directory=str(tmp_path))
@@ -544,16 +545,16 @@ def test_VIEW_T06_clip_and_transparency(app):
     assert len(app.execute("view.clip_add", point=[0.0, 0.0, 0.0], normal=[1.0, 0.0, 0.0])["planes"]) == 2  # 저장한 뷰에 평면이 있다
     app.execute("view.clip_remove")
     for params, code in [({"id": 99}, "not_found"), ({"point": [0, 0, 0]}, "missing_param")]:
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.clip_update" if "id" in params else "view.clip_add", **params)
         assert e.value.code == code
     for _ in range(8):
         app.execute("view.clip_add", point=[0.0, 0.0, 0.0], normal=[1.0, 0.0, 0.0])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.clip_add", point=[0.0, 0.0, 0.0], normal=[1.0, 0.0, 0.0])
     assert e.value.code == "out_of_range"
     app.execute("view.clip_remove")
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.clip", point=[0.0, 0.0, 0.0], normal=[0.0, 0.0, 0.0])
     # 투명: 면의 색이 배경(흰색)과 섞여 밝아지고, ID 버퍼에는 그 면이 없다
     rgba, ids = app.view.render(W, H)
@@ -570,6 +571,34 @@ def test_VIEW_T06_clip_and_transparency(app):
     assert app.execute("view.diagnostics")["last_frame"]["transparent"] > 0
     assert app.execute("view.transparency") == {"enabled": False}
     assert np.array_equal(app.view.render(W, H)[0], full)
+
+
+@pytest.mark.feature("RND-23")
+@pytest.mark.feature("GEO-06")
+def test_VIEW_T01_15_wire_part_visible_when_mesh_hidden(app):
+    """면이 없는 선 파트(골조)는 모서리를 파트 색으로 그린다 — 메싱 전에도, 메시를 숨겨도 보인다."""
+    if "feature.create_line" not in {c["name"] for c in app.commands()}:
+        pytest.skip("형상 커널 없음")
+    part = app.model.parts.create(name="FRAME")
+    for k in range(3):
+        app.execute("feature.create_line", parent=part.id, start=[k * 10.0, 0.0, 0.0], end=[k * 10.0, 0.0, 20.0])
+    app.execute("feature.create_line", parent=part.id, start=[0.0, 0.0, 20.0], end=[20.0, 0.0, 20.0])
+    app.execute("view.standard", name="front")
+    app.execute("view.fit")
+    before = drawn(app.view.render(W, H)[0])
+    assert before.sum() > 50 and extent(before)[0] > 0.5 * W  # 선이 화면 너비로 퍼져 그려진다
+    for mode in ("shaded", "wireframe"):  # 면이 없으니 표시 모드와 무관하게 보인다
+        app.execute("view.display_mode", mode=mode)
+        assert drawn(app.view.render(W, H)[0]).sum() > 50
+    app.execute("view.display_mode", mode="shaded_edges")
+    r = app.execute("mesh.generate", id=part.id, size=5.0, dimension=1)
+    assert r["elements"] > 0
+    app.execute("view.hide", ids=[r["mesh_part"]])  # 메시를 숨기면 형상 선이 그려진다
+    after = drawn(app.view.render(W, H)[0])
+    assert after.sum() == pytest.approx(before.sum(), rel=0.1)
+    app.execute("view.hide", ids=[part.id])
+    assert drawn(app.view.render(W, H)[0]).sum() == 0
+    app.execute("view.show_all")
 
 
 @pytest.mark.feature("RND-23")
@@ -596,7 +625,7 @@ def test_VIEW_T07_visibility_views_colors_labels(app):
     app.execute("view.hide", ids=[a.id, b.id])
     assert drawn_count() == 0
     assert app.execute("view.show_all") == {"hidden": []}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.hide", ids=[app.model.materials.create(name="M").id])
     assert e.value.code == "wrong_kind"
     # 뷰 저장·복원: 숨김·카메라가 함께 돌아온다
@@ -610,7 +639,7 @@ def test_VIEW_T07_visibility_views_colors_labels(app):
     r = app.execute("view.restore", name="one")
     assert r["restored"]["hidden"] == [b.id] and app.execute("view.camera_get")["eye"] == pytest.approx(r["restored"]["camera"]["eye"])
     assert np.array_equal(app.view.render(W, H)[0], saved_image)  # 저장 때와 같은 그림
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.restore", name="nope")
     app.execute("view.show_all")
     # 색 기준: 메시 파트 하나에 프로퍼티 둘 → 프로퍼티 기준이면 색이 둘, 재료가 같으면 재료 기준은 하나
@@ -626,6 +655,15 @@ def test_VIEW_T07_visibility_views_colors_labels(app):
     app.model.properties.create_solid(material=mat.id, target={"type": "elements", "ids": right})
     app.execute("view.standard", name="top")
     app.execute("view.display_mode", mode="shaded")
+    # 메시 파트를 숨기면(눈 아이콘) 형상이 대신 보인다 — auto 모드에서 메시가 형상을 가리던 것을 숨김이 되돌린다
+    with_mesh = drawn_count()
+    assert with_mesh > 0
+    app.execute("view.hide", ids=[r["mesh_part"]])
+    assert drawn_count() == pytest.approx(with_mesh, rel=0.05)  # 같은 자리의 형상이 그려진다(요소 선이 없을 뿐)
+    assert app.execute("view.pick", x=W // 2, y=H // 2, width=W, height=H)["kind"] == "face"  # 메시 요소가 아니라 형상 면이 집힌다
+    app.execute("view.hide", ids=[p.id])
+    assert drawn_count() == 0  # 형상도 숨기면 아무것도 없다
+    app.execute("view.show_all")
 
     def colors():
         img = app.view.render(W, H)[0]
@@ -664,7 +702,7 @@ def test_VIEW_T07_animation_and_jobs(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(10, 2, 2))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static(nlgeom=True, initial_increment=0.5, period=1.0)
@@ -677,11 +715,11 @@ def test_VIEW_T07_animation_and_jobs(app, tmp_path, monkeypatch):
     jobs = app.execute("job.list")
     assert jobs[0]["id"] == f"solver:{case.id}" and jobs[0]["state"] == "completed" and app.execute("job.get", id=jobs[0]["id"])["kind"] == "solver"
     assert app.execute("job.wait", id=jobs[0]["id"], timeout=5)["state"] == "completed"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("job.get", id="nope")
     assert e.value.code == "not_found"
     rid = app.execute("result.open", case=case.id)["id"]
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.animate")
     app.execute("view.result_show", result=rid, field="DISP", component="magnitude", deform_scale=10.0)
     an = app.execute("view.animate", interval_ms=50, loop=False)
@@ -728,9 +766,9 @@ def test_VIEW_T03_selection_and_filter(app):
     assert app.execute("selection.set", items=[pick])["count"] == 0  # 필터에 걸린 항목은 들어가지 않는다
     app.execute("selection.set_filter")
     assert app.execute("view.pick", x=W // 2, y=H // 2, width=W, height=H)["hit"]
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("selection.set_filter", kinds=["nope"])
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("selection.set", items=[{"kind": "face"}])
 
 
@@ -741,7 +779,7 @@ def test_VIEW_T08_legend_and_filter(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(20, 2, 2))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static()
@@ -752,7 +790,7 @@ def test_VIEW_T08_legend_and_filter(app, tmp_path, monkeypatch):
     rid = app.execute("result.open", case=case.id)["id"]
     app.execute("view.standard", name="front")
     app.execute("view.display_mode", mode="shaded")
-    with pytest.raises(OfepError) as e:  # 결과 표시 전에는 범위를 둘 수 없다
+    with pytest.raises(Nasa95Error) as e:  # 결과 표시 전에는 범위를 둘 수 없다
         app.execute("view.legend", min=0.0)
     assert e.value.code == "invalid_state"
     app.execute("view.result_show", result=rid, field="DISP", component="magnitude")
@@ -779,7 +817,7 @@ def test_VIEW_T08_legend_and_filter(app, tmp_path, monkeypatch):
     app.execute("view.legend", levels=0, colormap="grayscale")
     img = app.view.render(W, H)[0]
     assert all(abs(int(c[0]) - int(c[1])) < 3 and abs(int(c[1]) - int(c[2])) < 3 for c in (px(img, x) for x in range(xs.min() + 3, xs.max() - 2, 10)))
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.legend", colormap="nope")
     # 범위 밖을 회색으로: 범위를 중간까지로 두면 끝단이 회색
     app.execute("view.legend", colormap="rainbow", max=0.5 * mm["max"]["value"], out_of_range="gray")
@@ -799,7 +837,7 @@ def test_VIEW_T08_legend_and_filter(app, tmp_path, monkeypatch):
     assert tuple(px(img, xs.max() - 3)) == (150, 150, 150) and px(img, xs.min() + 3)[2] > 150
     assert app.execute("view.result_filter") == {"enabled": False}
     assert px(app.view.render(W, H)[0], xs.max() - 3)[0] > 150
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.result_filter", target={"type": "elements", "ids": [99999]})
 
 
@@ -832,32 +870,32 @@ def test_VIEW_T08_appearance_mesh_options_tree_state(app):
     assert ids[yy, xx] == 0 and rgba[yy, xx, 0] > 200 and rgba[yy, xx, 1] > 120  # 흰 배경과 섞여 밝다
     assert app.execute("view.set_appearance", id=mp.id)["cleared"] is True
     assert np.array_equal(app.view.render(W, H)[0], base[0])
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.set_appearance", id=mp.id, color=[1, 2])
     assert e.value.code == "invalid_param"
     mat = app.model.materials.create(name="M")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.set_appearance", id=mat.id, color=[1, 2, 3])
     assert e.value.code == "wrong_kind"
     # 메시 옵션: 경계선 끄기 → 어두운 선 픽셀이 사라진다. 축소 → 그린 픽셀이 줄고 요소 사이가 벌어진다
     dark = lambda img: int(np.sum(np.all(img[:, :, :3] < 60, axis=2)))  # noqa: E731
     assert dark(base[0]) > 50
     r = app.execute("view.mesh_options", edges=False)
-    assert r == {"edges": False, "shrink": 0.0, "solid_1d_2d": False} and dark(app.view.render(W, H)[0]) < 5
+    assert r == {"edges": False, "shrink": 0.0, "solid_1d_2d": False, "beam_axes": False} and dark(app.view.render(W, H)[0]) < 5
     r = app.execute("view.mesh_options", edges=True, shrink=0.3)
     shrunk = app.view.render(W, H)
     assert r["shrink"] == 0.3 and np.count_nonzero(shrunk[1]) < 0.8 * np.count_nonzero(base[1])
     sw, sh = extent(drawn(shrunk[0]))
     bw, bh = extent(drawn(base[0]))
     assert bw - 30 < sw < bw and bh - 30 < sh < bh  # 요소마다 줄어 전체도 조금 준다
-    assert app.execute("view.mesh_options") == {"edges": True, "shrink": 0.0, "solid_1d_2d": False}
-    with pytest.raises(OfepError):
+    assert app.execute("view.mesh_options") == {"edges": True, "shrink": 0.0, "solid_1d_2d": False, "beam_axes": False}
+    with pytest.raises(Nasa95Error):
         app.execute("view.mesh_options", shrink=1.5)
     # 트리 상태
     assert app.execute("view.tree_state_get") == {}
     assert app.execute("view.tree_state_set", state={"parts": True, "materials": False}) == {"parts": True, "materials": False}
     assert app.execute("view.tree_state_get")["materials"] is False
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.tree_state_set", state=[1])
 
 
@@ -892,7 +930,7 @@ def test_VIEW_T09_pick_region_and_show_targets(app):
     assert app.execute("view.pick_region", shape="box", points=[0, 0, W, H], width=W, height=H)["count"] == 0
     app.execute("selection.set_filter")
     for params in ({"shape": "box", "points": [1, 2, 3]}, {"shape": "circle", "points": [1, 2]}, {"shape": "polygon", "points": [1, 2, 3, 4]}):
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("view.pick_region", width=W, height=H, **params)
         assert e.value.code == "invalid_param"
     # 적용 대상 표시: 윗면 압력 → 면 4개 강조(주황 덧그림), 노드 셋 구속 → 표식
@@ -912,7 +950,7 @@ def test_VIEW_T09_pick_region_and_show_targets(app):
     assert orange > 200 and not np.array_equal(img, plain)
     assert app.execute("view.show_targets") == {"faces": 0, "nodes": 0, "objects": []}
     assert np.array_equal(app.view.render(W, H)[0], plain)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.show_targets", ids=[9999])
 
 
@@ -939,7 +977,7 @@ def test_VIEW_T09_overlay_and_quality(app):
     assert np.sum(np.all(bottom < 60, axis=2)) > 60  # 눈금자 선·글자의 어두운 픽셀
     assert app.execute("view.overlay") == {"triad": False, "ruler": False, "background": [255, 255, 255]}
     assert np.array_equal(app.view.render(W, H)[0], base)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.overlay", background=[300, 0, 0])
     # SSAA: 경계 픽셀에 중간 밝기(부드러운 계단)가 생기고 ID 는 그대로
     r = app.execute("view.quality", antialiasing="ssaa2")
@@ -958,7 +996,7 @@ def test_VIEW_T09_overlay_and_quality(app):
     assert app.execute("view.quality", simplify_during_interaction=True)["simplify_during_interaction"] is True
     sorted_img = app.view.render(W, H)[0]
     assert sorted_img.shape == base.shape and np.count_nonzero(drawn(sorted_img)) > 0
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.quality", antialiasing="msaa8")
 
 
@@ -971,7 +1009,7 @@ def test_VIEW_T09_result_options(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(10, 1, 1))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static()
@@ -982,7 +1020,7 @@ def test_VIEW_T09_result_options(app, tmp_path, monkeypatch):
     rid = app.execute("result.open", case=case.id)["id"]
     app.execute("view.standard", name="front")
     app.execute("view.display_mode", mode="shaded")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.result_options", vectors="DISP")
     assert e.value.code == "invalid_state"
     app.execute("view.result_show", result=rid, field="DISP", component="magnitude", deform_scale=30.0)
@@ -1000,7 +1038,7 @@ def test_VIEW_T09_result_options(app, tmp_path, monkeypatch):
     ys, xs = np.nonzero((img2[:, :, 0] > 150) & (img2[:, :, 1] < 80) & (img2[:, :, 2] > 100))
     assert ys.max() > np.nonzero(drawn(deformed))[0].max()  # 화살표(아래로 향한 변위)가 형상 아래까지 뻗는다
     assert app.execute("view.result_options", vectors="DISP")["vectors"] == {"field": "DISP"}  # 자동 배율
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.result_options", vectors="NOPE")
     assert e.value.code == "not_found"
     assert app.execute("view.result_options") == {}
@@ -1025,10 +1063,10 @@ def test_VIEW_T10_layout_and_expansion(app):
     lw, lh = extent(left != 0)
     rw, rh = extent(right != 0)
     assert lh < rh  # 정면은 납작하고 등각은 높이가 있다
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.layout", rows=1, cols=1, views=["front", "iso"])
     assert e.value.code == "out_of_range"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.layout", rows=1, cols=2, views=["nope"])
     assert e.value.code == "not_found"
     assert app.execute("view.layout")["cells"] == []
@@ -1050,7 +1088,7 @@ def test_VIEW_T10_layout_and_expansion(app):
     assert w4 > 1.8 * w1 or h4 > 1.8 * h1  # 전체에 맞추므로 화면 비율이 달라진다: 십자는 정사각에 가깝다
     assert abs(w4 - h4) < 0.2 * max(w4, h4) and app.execute("view.pick_region", shape="box", points=[0, 0, W, H], width=W, height=H)["count"] == 4 * 4 or True
     assert app.execute("view.expand_cyclic") == {"enabled": False}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.expand_cyclic", sectors=3, point=[0, 0, 0], axis=[0, 0, 0])
     assert e.value.code == "out_of_range"
     # 순환대칭 구속 객체에서 축·섹터 수를 가져온다
@@ -1089,7 +1127,7 @@ def test_VIEW_T10_beam_diagram_and_expand_result(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     mat = S.steel(app)
     L, F, nel = 100.0, 10.0, 10
     n = app.execute("mesh.nodes_create", coords=[[L * i / nel, 0.0, 0.0] for i in range(nel + 1)])["ids"]
@@ -1104,7 +1142,7 @@ def test_VIEW_T10_beam_diagram_and_expand_result(app, tmp_path, monkeypatch):
     s.outputs.create_element_file(variables=["S"], section_forces=True)
     assert app.execute("case.run", id=case.id, wait=True)["state"] == "completed"
     rid = app.execute("result.open", case=case.id)["id"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.beam_diagram", quantity="moment_1")
     assert e.value.code == "invalid_state"
     app.execute("view.result_show", result=rid, frame=1)
@@ -1128,7 +1166,7 @@ def test_VIEW_T10_beam_diagram_and_expand_result(app, tmp_path, monkeypatch):
     assert r["values"][0][2] == pytest.approx(u) and r["values"][1][2] == pytest.approx(u) and r["values"][1][1] == pytest.approx(r["values"][0][0], abs=1e-12)
     rs = app.execute("result.expand_cyclic", result=rid, frame=1, field="STRESS", sectors=2, point=[0, 0, 0], axis=[0, 0, 1], nodes=[n[0]])
     assert len(rs["values"]) == 2 and len(rs["values"][0]) == 6 and rs["values"][1][2] == pytest.approx(rs["values"][0][2])  # SZZ 는 z 축 회전에 불변
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("result.expand_cyclic", result=rid, frame=1, field="DISP", point=[0, 0, 0], axis=[0, 0, 1])
     assert e.value.code == "missing_param"
 
@@ -1141,7 +1179,7 @@ def test_VIEW_T11_section_iso_streamlines(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(20, 2, 2))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static()
@@ -1169,7 +1207,7 @@ def test_VIEW_T11_section_iso_streamlines(app, tmp_path, monkeypatch):
     assert max(px) - min(px) > 60  # 유채색
     app.execute("view.clip")
     assert app.execute("view.section_result") == {"enabled": False}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.section_result", point=[0, 0, 0])
     assert e.value.code == "missing_param"
     # 등가면: 변위 크기의 중간값인 면 → 보의 어딘가를 가로지르는 면(픽셀이 있고, 범례 가운데 색)
@@ -1197,11 +1235,11 @@ def test_VIEW_T11_section_iso_streamlines(app, tmp_path, monkeypatch):
     colored = np.nonzero(np.any(np.abs(sl[:, :, :3].astype(int) - 255) > 40, axis=2))
     assert len(colored[0]) > 10 and colored[0].max() - colored[0].min() > 5  # 세로로 뻗은 선
     assert app.execute("view.streamlines") == {"enabled": False}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.streamlines", seeds=[[0, 0, 0]], field="NOPE")
     assert e.value.code == "not_found"
     app.execute("view.result_show")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("view.iso_surface", values=[1.0])
     assert e.value.code == "invalid_state"
 
@@ -1217,13 +1255,21 @@ def test_RND_T01_14_23_solid_1d_2d(app):
     beam = app.execute("mesh.elements_create", shape="line2", connectivity=[[n, n + 1]])["first"]
     app.model.properties.create_beam(material=mat.id, section="rect", dimensions=[6.0, 3.0], direction=[0.0, 0.0, 1.0], target={"type": "elements", "ids": [beam]})
     app.execute("view.display_mode", mode="shaded")
+    # 선 요소는 선으로 그릴 때 파트 색(조명 없음)으로 그려진다 — 모서리색(짙은 회색)이 아니라서 어두운 배경에서도 보인다
+    app.execute("view.standard", name="top")
+    app.execute("view.fit")
+    top = app.view.render(W, H)[0]
+    rows = np.nonzero(drawn(top).any(axis=1))[0]
+    beam_rows = top[rows.min():rows.min() + 3]  # 보(y=30)는 판(y 0~10) 위 → 화면 맨 위 줄
+    line_pixels = beam_rows[drawn(beam_rows)][:, :3]
+    assert len(line_pixels) > 20 and not np.any(np.all(line_pixels == (30, 30, 30), axis=1)) and line_pixels.min() > 100
     app.execute("view.standard", name="front")  # -y 에서 본다: 쉘 두께(z)·보 단면 1축(z) 이 보인다
     app.execute("view.fit")
     flat = app.view.render(W, H)[0]
     tri_flat = app.execute("view.diagnostics")["last_frame"]["triangles"]
     assert app.execute("view.mesh_options")["solid_1d_2d"] is False
     r = app.execute("view.mesh_options", solid_1d_2d=True)
-    assert r == {"edges": True, "shrink": 0.0, "solid_1d_2d": True}
+    assert r == {"edges": True, "shrink": 0.0, "solid_1d_2d": True, "beam_axes": False}
     solid = app.view.render(W, H)[0]
     tri_solid = app.execute("view.diagnostics")["last_frame"]["triangles"]
     assert not np.array_equal(flat, solid)
@@ -1233,7 +1279,116 @@ def test_RND_T01_14_23_solid_1d_2d(app):
     app.execute("view.mesh_options", solid_1d_2d=False)
     assert np.array_equal(app.view.render(W, H)[0], flat)  # 끔(RND-T01-23)
     app.execute("view.mesh_options")
-    assert app.execute("view.mesh_options") == {"edges": True, "shrink": 0.0, "solid_1d_2d": False}
+    assert app.execute("view.mesh_options") == {"edges": True, "shrink": 0.0, "solid_1d_2d": False, "beam_axes": False}
+
+
+@pytest.mark.feature("RND-22")
+@pytest.mark.feature("PRP-05")
+def test_RND_T01_50_composite_section_display(app):
+    """형강 단면(D15)의 입체 표시: I 단면은 부분 직사각형 3개(상자 3개 = 36 삼각형), 끝에서 보면 높이 h·폭 b 의 I 모양(가운데 웨브는 좁다)."""
+    mat = app.model.materials.create(name="M")
+    n = app.execute("mesh.nodes_create", coords=[[0.0, 0.0, 0.0], [50.0, 0.0, 0.0]])["first"]
+    beam = app.execute("mesh.elements_create", shape="line2", connectivity=[[n, n + 1]])["first"]
+    h, b, tw, tf = 40.0, 24.0, 4.0, 6.0
+    prop = app.model.properties.create_beam(material=mat.id, section="I", dimensions=[h, b, tw, tf], direction=[0.0, 0.0, 1.0], target={"type": "elements", "ids": [beam]})
+    app.execute("view.display_mode", mode="shaded")
+    app.execute("view.mesh_options", solid_1d_2d=True)
+    app.execute("view.standard", name="right")  # +x 에서 본다: 단면(y 폭, z 높이)이 보인다
+    app.execute("view.fit")
+    img = app.view.render(W, H)[0]
+    assert app.execute("view.diagnostics")["last_frame"]["triangles"] == 36
+    mask = drawn(img)
+    ext = extent(mask)
+    assert ext[1] / ext[0] == pytest.approx(h / b, rel=0.05)  # 높이:폭
+    ys, xs = np.nonzero(mask)
+    mid = ys[(ys > ys.min() + 0.4 * ext[1]) & (ys < ys.max() - 0.4 * ext[1])]  # 가운데 띠(웨브)
+    web_width = np.ptp(xs[(ys > ys.min() + 0.4 * ext[1]) & (ys < ys.max() - 0.4 * ext[1])]) + 1
+    assert web_width == pytest.approx(ext[0] * tw / b, abs=3)
+    # 오프셋: offset1=0.5 → 단면이 -1축(-z) 쪽으로 h 만큼 이동(축 = 기준선 - 오프셋 × 크기)
+    before = ys.mean()
+    prop.update(offset1=0.5)
+    ys2, _ = np.nonzero(drawn(app.view.render(W, H)[0]))
+    assert ys2.mean() > before + 0.25 * ext[1]  # 화면 아래쪽(-z) 으로 내려간다(화면 밖으로 일부 잘려도 평균은 내려간다)
+    app.execute("view.mesh_options")
+    # 1축 방향 표식(PRP-07): 선 표시에서 요소마다 선 하나(주황)가 더 그려지고, 단면을 알면 길이 = h/2
+    base_lines = app.execute("view.diagnostics")["last_frame"]["lines"] if app.view.render(W, H) else 0
+    r = app.execute("view.mesh_options", beam_axes=True)
+    assert r["beam_axes"] is True and r["solid_1d_2d"] is False
+    app.execute("view.standard", name="front")  # -y 에서: 1축(+z)이 위로 보인다
+    app.execute("view.fit")
+    img = app.view.render(W, H)[0]
+    assert app.execute("view.diagnostics")["last_frame"]["lines"] == base_lines + 1
+    orange = np.nonzero(np.all(np.abs(img[:, :, :3].astype(int) - (235, 140, 40)) < 30, axis=2))
+    assert len(orange[0]) > 3 and orange[0].min() < H // 2 - 2  # 요소 중앙 위쪽(+z)으로 뻗는다
+    app.execute("view.mesh_options")
+
+
+@pytest.mark.feature("RND-21")
+def test_RND_T01_46_shrink_solids_and_query(app):
+    """공유 면도 닫힌 채 분리하고 조회·토글은 모델과 다른 표시 옵션을 보존한다."""
+    from meshutil import block
+    block(app, 2, 1, 1, size=(2.0, 1.0, 1.0))
+    app.execute("view.hud", navigation_cube=False)
+    app.execute("view.standard", name="top")
+    app.execute("view.fit")
+    before, history = app.digest(), app.execute("app.history")
+    base, ids = app.view.render(W, H)
+    assert app.execute("view.diagnostics")["last_frame"]["triangles"] == 20
+    assert ids[H // 2, W // 2] != 0
+    app.execute("view.mesh_options", shrink=0.2)
+    shrunk, separated = app.view.render(W, H)
+    assert app.execute("view.diagnostics")["last_frame"]["triangles"] == 24
+    assert separated[H // 2, W // 2] == 0
+    assert 0 < np.count_nonzero(separated) < np.count_nonzero(ids)
+    assert not np.array_equal(base, shrunk)
+    for _ in range(3):
+        assert app.execute("view.mesh_options_get")["shrink"] == 0.2
+    app.execute("view.mesh_options", shrink=0.0)
+    restored, restored_ids = app.view.render(W, H)
+    assert np.array_equal(base, restored) and np.array_equal(ids, restored_ids)
+    app.execute("view.mesh_options", edges=False, solid_1d_2d=True, shrink=0.4)
+    app.execute("view.mesh_options", shrink=0.0)
+    expected = {"edges": False, "solid_1d_2d": True, "shrink": 0.0, "beam_axes": False}
+    assert app.execute("view.mesh_options_get") == expected
+    for invalid in (-0.1, 0.91):
+        with pytest.raises(Nasa95Error):
+            app.execute("view.mesh_options", shrink=invalid)
+        assert app.execute("view.mesh_options_get") == expected
+    assert app.digest() == before and app.execute("app.history") == history
+
+
+@pytest.mark.feature("RND-21")
+@pytest.mark.feature("RND-22")
+@pytest.mark.parametrize("kind", ["line", "shell", "solid_beam", "solid_shell"])
+def test_RND_T01_47_shrink_lines_shells_and_sections(app, kind):
+    """선·면과 입체 단면 모두 30% 축소하면 투영 크기가 약 70%가 된다."""
+    from meshutil import plate
+    app.execute("view.hud", navigation_cube=False)
+    if kind in ("line", "solid_beam"):
+        n = app.execute("mesh.nodes_create", coords=[[0.0, 0.0, 0.0], [20.0, 0.0, 0.0]])["first"]
+        eid = app.execute("mesh.elements_create", shape="line2", connectivity=[[n, n + 1]])["first"]
+    else:
+        eid = plate(app, 1, 1, size=(20.0, 10.0))["elements"][0]
+    if kind.startswith("solid_"):
+        mat = app.model.materials.create(name="M")
+        target = {"type": "elements", "ids": [eid]}
+        if kind == "solid_beam":
+            app.model.properties.create_beam(material=mat.id, section="rect", dimensions=[6.0, 3.0], direction=[0.0, 0.0, 1.0], target=target)
+        else:
+            app.model.properties.create_shell(material=mat.id, thickness=4.0, target=target)
+        app.execute("view.mesh_options", solid_1d_2d=True)
+    app.execute("view.standard", name="front" if kind.startswith("solid_") else "top")
+    app.execute("view.fit")
+    before = app.digest()
+    base = app.view.render(W, H)[0]
+    original = extent(drawn(base))
+    app.execute("view.mesh_options", shrink=0.3)
+    smaller = extent(drawn(app.view.render(W, H)[0]))
+    for axis in range(1 if kind == "line" else 2):
+        assert abs(smaller[axis] - original[axis] * 0.7) <= 2
+    app.execute("view.mesh_options", shrink=0.0)
+    assert np.array_equal(app.view.render(W, H)[0], base)
+    assert app.digest() == before
 
 
 @pytest.mark.feature("RND-29")
@@ -1242,7 +1397,7 @@ def test_RND_T03_03_value_location(app, tmp_path, monkeypatch):
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(10, 2, 2))
     case.update(work_directory=str(tmp_path))
     s = case.steps.create_static()
@@ -1266,7 +1421,7 @@ def test_RND_T03_03_value_location(app, tmp_path, monkeypatch):
         return len({tuple(c) for c in img[drawn(img)][:, :3]})
 
     assert colors(elem) < colors(nodal)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("view.result_show", result=rid, field="DISP", component="magnitude", location="gauss")
     app.execute("view.result_show", result=rid, field="DISP", component="magnitude", location="nodal")
     assert np.array_equal(app.view.render(W, H)[0], nodal)
@@ -1383,13 +1538,13 @@ def test_SYS_22_03_07_12_16_tree_to_view_and_result_activation(app, tmp_path, mo
     assert [i["object_kind"] for i in app.execute("selection.get")["items"]] == ["material"]
     app.execute("selection.clear")
     assert np.array_equal(app.view.render(W, H)[0], plain) and app.execute("selection.get")["items"] == []
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("selection.set", items=[{"kind": "object", "id": 99999}])
     # 결과 활성화(SYS-22-07·16)
     import test_SOLVER_ccx as S
     if S.CCX is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", S.CCX)
+    monkeypatch.setenv("NASA95_CCX", S.CCX)
     app.execute("project.new")
     part, mat, root, tip, case = S.cantilever(app, order=1, n=(10, 2, 2))
     case.update(work_directory=str(tmp_path))
@@ -1457,3 +1612,133 @@ def test_VIEW_T08_sketch_entities_are_drawn(app):
     hidden = app.view.render(W, H)[0]
     orange3 = (hidden[:, :, 0] > 200) & (hidden[:, :, 1] > 100) & (hidden[:, :, 1] < 180) & (hidden[:, :, 2] < 90)
     assert orange3.sum() == 0
+
+
+@pytest.mark.feature("RND-34")
+@pytest.mark.feature("WT-20")
+def test_VIEW_RND_T03_26_symbols_per_set(app):
+    """셋 단위 심볼: 숨긴 셋(view.hide)의 하중·구속은 그리지 않고, view.symbols sets= 는 스텝 없이 그 셋만 그린다(트리의 눈 아이콘)."""
+    from meshutil import block
+    block(app, 10, 2, 2)
+    root = app.model.sets.create_node(name="ROOT", ids=app.execute("mesh.find", what="nodes", box_min=[-.1, -1, -1], box_max=[.1, 21, 11])["ids"])
+    tip = app.model.sets.create_node(name="TIP", ids=app.execute("mesh.find", what="nodes", box_min=[99.9, -1, -1], box_max=[100.1, 21, 11])["ids"])
+    D, L, S = app.model.load_sets.create(name="D"), app.model.load_sets.create(name="L"), app.model.bc_sets.create(name="S")
+    S.bcs.create_displacement(target={"type": "set", "ids": [root.id]}, dofs=[1, 2, 3])                      # 선 없음: 색칠 + 이름표
+    D.loads.create_force(target={"type": "set", "ids": [tip.id]}, components=[0.0, 0.0, -10.0])               # 9개 입체 화살표
+    L.loads.create_pressure(target={"type": "faces", "ids": [[e, 2] for e in range(31, 41)]}, value=1.0)      # 10개 입체 화살표
+    s = app.model.cases.create().steps.create_static(load_sets=[{"set": D.id}, {"set": L.id}], bc_sets=[S.id])
+    app.execute("view.standard", name="front")
+    app.view.render(W, H)
+    base = app.execute("view.diagnostics")["last_frame"]["triangles"]
+    triangles = lambda: (app.view.render(W, H), app.execute("view.diagnostics")["last_frame"]["triangles"])[1]  # noqa: E731
+    marks = lambda: [k["label"] for k in app.execute("view.diagnostics")["bc_marks"]]  # noqa: E731
+    app.execute("view.symbols", step=s.id)
+    assert triangles() == base + 19 * 96 and app.execute("view.diagnostics")["symbols"] is True and marks() == ["UXYZ"]
+    assert app.execute("view.hide", ids=[L.id])["hidden"] == [L.id]
+    assert triangles() == base + 9 * 96 and marks() == ["UXYZ"]  # 숨긴 셋의 압력 화살표가 빠진다
+    app.execute("view.hide", ids=[S.id])
+    assert triangles() == base + 9 * 96 and marks() == []  # 숨긴 구속 셋의 구속 표시가 빠진다
+    app.execute("view.show", ids=[L.id, S.id])
+    assert triangles() == base + 19 * 96 and marks() == ["UXYZ"]
+    # 스텝 없이 셋만: D의 힘 화살표 9개
+    r = app.execute("view.symbols", sets=[D.id])
+    assert r["shown"] is True and r["sets"] == [D.id] and triangles() == base + 9 * 96 and marks() == []
+    app.execute("view.hide", ids=[D.id])
+    assert triangles() == base
+    app.execute("view.show_all")
+    app.execute("view.symbols", sets=[D.id, S.id])
+    assert triangles() == base + 9 * 96 and marks() == ["UXYZ"]
+    for bad in ({"sets": [root.id]}, {"ids": [root.id]}):
+        with pytest.raises(Nasa95Error) as e:
+            app.execute("view.symbols" if "sets" in bad else "view.hide", **bad)
+        assert e.value.code == "wrong_kind"
+    assert app.execute("view.symbols")["shown"] is False and app.execute("view.diagnostics")["symbols"] is False
+
+
+@pytest.mark.feature("BC-13")
+@pytest.mark.feature("RND-34")
+@pytest.mark.feature("WT-22")
+def test_VIEW_RND_T03_27_bc_marks(app):
+    """구속 표시: 구속마다 적용 영역 색칠과 이름표 하나(자유도는 글로), 고른 구속만 진하게 + 축 기호. 노드마다 선을 긋지 않는다."""
+    from meshutil import block
+    block(app, 10, 2, 2)
+    find = lambda lo, hi: app.execute("mesh.find", what="nodes", box_min=lo, box_max=hi)["ids"]  # noqa: E731
+    root = app.model.sets.create_node(name="ROOT", ids=find([-.1, -1, -1], [.1, 21, 11]))
+    top = app.model.sets.create_node(name="TOP", ids=find([29.9, -1, 9.9], [70.1, 21, 11]))
+    edge = app.model.sets.create_node(name="EDGE", ids=find([99.9, -1, -.1], [100.1, 21, .1]))
+    s = app.model.cases.create().steps.create_static()
+    B = s.bcs
+    fix = B.create_displacement(target={"type": "set", "ids": [root.id]}, dofs=[1, 2, 3, 4, 5, 6])
+    sym = B.create_symmetry(target={"type": "set", "ids": [top.id]}, normal="z")
+    rol = B.create_displacement(target={"type": "set", "ids": [edge.id]}, dofs=[3, 4])
+    B.create_displacement(target={"type": "nodes", "ids": [1]}, dofs=[1], values=[0.5])
+    B.create_fixed_current(target={"type": "nodes", "ids": [2]}, dofs=[1, 2])
+    B.create_antisymmetry(target={"type": "nodes", "ids": [3]}, normal="x")
+    B.create_temperature(target={"type": "nodes", "ids": [4]}, value=20.0)
+    app.execute("view.standard", name="iso")
+    app.view.render(W, H)
+    base = app.execute("view.diagnostics")["last_frame"]
+    assert app.execute("view.diagnostics")["bc_marks"] == []  # 심볼이 꺼져 있으면 없다
+    app.execute("view.symbols", step=s.id)
+    plain = app.view.render(W, H)[0]
+    d = app.execute("view.diagnostics")
+    marks = {k["id"]: k for k in d["bc_marks"]}
+    assert [k["label"] for k in d["bc_marks"]] == ["FIX", "SYM Z", "UZ RX", "DISP UX", "HOLD UXY", "ASYM X", "T=20"]
+    assert len({tuple(k["color"]) for k in d["bc_marks"][:6]}) == 6  # 구속마다 다른 색
+    # 면을 이루는 대상은 면을 칠하고(끝면 4칸·윗면 8칸 = 사각형마다 삼각형 2개), 모서리·점은 노드 표식으로
+    assert (marks[fix.id]["triangles"], marks[fix.id]["nodes"]) == (8, 0) and (marks[sym.id]["triangles"], marks[sym.id]["nodes"]) == (16, 0)
+    assert (marks[rol.id]["triangles"], marks[rol.id]["nodes"]) == (0, 3)
+    assert marks[fix.id]["glyph_points"] == 9 and marks[rol.id]["glyph_points"] == 3  # 축 기호 자리는 9개까지 솎는다
+    assert d["last_frame"]["lines"] == base["lines"] and d["last_frame"]["transparent"] == 8 + 16  # 선은 늘지 않고 색칠이 는다
+    assert d["last_frame"]["hud_triangles"] > base["hud_triangles"]  # 이름표
+    teal = (plain[:, :, 0] < 40) & (abs(plain[:, :, 1].astype(int) - 150) < 12) & (abs(plain[:, :, 2].astype(int) - 136) < 12)
+    assert teal.sum() > 200  # SYM Z 이름표의 바탕
+    # 고른 구속(트리 선택)만 진하게 + 축 기호. 구속 셋을 골라도 그 안의 구속이 고른 것이 된다
+    assert not any(k["focused"] for k in d["bc_marks"])
+    app.execute("selection.set", items=[{"kind": "object", "id": rol.id}])
+    focused = app.view.render(W, H)[0]
+    d2 = app.execute("view.diagnostics")
+    assert [k["id"] for k in d2["bc_marks"] if k["focused"]] == [rol.id] and not np.array_equal(focused, plain)
+    assert d2["last_frame"]["vertex_bytes"] > d["last_frame"]["vertex_bytes"]  # 축 기호(원뿔·원판)가 더해진다
+    assert d2["last_frame"]["lines"] == base["lines"] + 3  # 병진 없이 회전만 막은 축(RX)의 원판을 노드에 잇는 대
+    app.execute("selection.set", items=[{"kind": "object", "id": app.execute("bc.get", id=fix.id)["parent"]}])
+    app.view.render(W, H)
+    assert all(k["focused"] for k in app.execute("view.diagnostics")["bc_marks"])
+    app.execute("selection.clear")
+    assert np.array_equal(app.view.render(W, H)[0], plain)
+    # 구속을 고치면 이름표가 따라 바뀐다
+    app.execute("bc.update", id=fix.id, dofs=[1, 2, 3])
+    app.view.render(W, H)
+    assert app.execute("view.diagnostics")["bc_marks"][0]["label"] == "UXYZ"
+
+
+@pytest.mark.feature("RND-22")
+@pytest.mark.feature("PRP-05")
+def test_RND_T01_51_hollow_sections_display(app):
+    """속 빈 단면의 입체 표시: 박스는 벽 4개(상자 4개 = 48 삼각형)로 속이 비고, 파이프는 속 빈 원통(바깥·안 벽 + 고리 끝면), 원형은 원통.
+    끝에서 보면 박스·파이프의 가운데가 비어 있다(배경이 보인다)."""
+    mat = app.model.materials.create(name="M")
+    n = app.execute("mesh.nodes_create", coords=[[0.0, 0.0, 0.0], [50.0, 0.0, 0.0]])["first"]
+    beam = app.execute("mesh.elements_create", shape="line2", connectivity=[[n, n + 1]])["first"]
+    prop = app.model.properties.create_beam(material=mat.id, section="box", dimensions=[40.0, 30.0, 4.0, 3.0, 4.0, 3.0], direction=[0.0, 0.0, 1.0],
+                                            target={"type": "elements", "ids": [beam]})
+    app.execute("view.display_mode", mode="shaded")
+    app.execute("view.mesh_options", solid_1d_2d=True)
+    app.execute("view.standard", name="right")  # +x 에서: 단면이 보인다 → 가운데 구멍
+    app.execute("view.fit")
+    img = app.view.render(W, H)[0]
+    assert app.execute("view.diagnostics")["last_frame"]["triangles"] == 4 * 12
+    assert not drawn(img)[H // 2, W // 2]  # 가운데는 빈 곳(배경)
+    assert drawn(img).sum() > 100
+    assert app.execute("property.section_shape", section="box", dimensions=[40.0, 30.0, 4.0, 3.0, 4.0, 3.0])["extent"] == [40.0, 30.0]
+    for sec, dims, hollow in (("pipe", [15.0, 3.0], True), ("circ", [30.0, 20.0], False)):
+        prop.update(section=sec, dimensions=dims)
+        app.execute("view.fit")
+        img = app.view.render(W, H)[0]
+        tri = app.execute("view.diagnostics")["last_frame"]["triangles"]
+        assert tri == (24 * 2 * 2 + 24 * 2 * 2 if hollow else 24 * 2 + 24 * 2), (sec, tri)
+        assert drawn(img)[H // 2, W // 2] == (not hollow), sec  # 파이프는 가운데가 비고 원형은 차 있다
+        if sec == "circ":
+            ext = extent(drawn(img))
+            assert ext[1] / ext[0] == pytest.approx(30.0 / 20.0, rel=0.08)  # 1축 지름 30(세로), 2축 20(가로)
+    app.execute("view.mesh_options")

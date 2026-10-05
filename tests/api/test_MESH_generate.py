@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 
-from openfep import App, OfepError
+from nasa95 import App, Nasa95Error
 
 from conftest import history_len, total
 
@@ -119,7 +119,7 @@ def test_MSH_T02_second_order_and_sizes(app):
     for params, code in [(dict(size=0.0), "out_of_range"), (dict(order=3), "out_of_range"), (dict(face_sizes=[[99, 1.0]]), "not_found"),
                          (dict(element_type="C3D8"), "out_of_range")]:
         before = total(app)
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             app.execute("mesh.generate", id=part.id, **params)
         assert e.value.code == code and total(app) == before, params
 
@@ -135,7 +135,7 @@ def test_MSH_T02_surface_mesh(app):
     assert "faces" not in a and len(a["elements"]) > 0  # 쉘 메시에서는 면이 요소에 대응한다
     assert sum(len(app.execute("mesh.association", id=p.id, type="face", index=f)["elements"]) for f in range(1, 7)) == r["elements"]
     empty = app.model.parts.create(name="EMPTY")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.generate", id=empty.id)
     assert e.value.code == "invalid_state"
 
@@ -160,7 +160,7 @@ def test_MSH_T03_geometry_targets_survive_remesh(app):
     gr = step.loads.create_gravity(target=geo("solid", 1), value=9810.0, direction=[0.0, 0.0, -1.0])
     # 메시가 없으면 풀 수 없다
     assert app.execute("mesh.status") == [{"part": p.id, "name": "BOX", "state": "none", "mesh_part": None, "elements": 0}]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("bc.resolve", id=bc.id)
     assert e.value.code == "not_available"
     r = app.execute("mesh.generate", id=p.id, size=10.0)
@@ -197,11 +197,11 @@ def test_MSH_T03_geometry_targets_survive_remesh(app):
     assert c["elements"] == done[0]["elements"] and app.execute("project.info")["nodes"] == 0
     assert app.execute("mesh.status")[0]["state"] == "none" and len(app.execute("mesh_part.list")) == 1
     # 형상 대상이 가리키는 파트는 지울 수 없다
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         p.delete()
     assert e.value.code == "referenced"
     for bad in ([[p.id, "wire", 1]], [[p.id, "face"]], [1], [[99999, "face", 1]]):
-        with pytest.raises(OfepError) as e:
+        with pytest.raises(Nasa95Error) as e:
             step.loads.create_pressure(target={"type": "geometry", "ids": bad}, value=1.0)
         assert e.value.code in ("invalid_param_type", "not_found")
     assert x1
@@ -219,7 +219,7 @@ def test_E2E_geometry_to_result(app, tmp_path, monkeypatch):
     """외팔보를 형상에서 시작해 풀고, 끝단 처짐을 보 이론과 비교한다."""
     if _ccx() is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", _ccx())
+    monkeypatch.setenv("NASA95_CCX", _ccx())
     p = box(app, "BEAM", size=(100.0, 20.0, 10.0))
     faces = {tuple(round(c, 6) for c in f["center"]): f["index"] for f in app.execute("geometry.entities", id=p.id, type="face")["entities"]}
     geo = lambda i: {"type": "geometry", "ids": [[p.id, "face", i]]}
@@ -274,7 +274,7 @@ def test_MSH_T03_set_from_geometry(app):
                          (dict(entities=[[p.id, "face", 99]], **{"as": "node"}), "not_found"),
                          (dict(entities=[[p.id, "blob", 1]], **{"as": "node"}), "invalid_param_type"),
                          (dict(entities=face, **{"as": "edge"}), "out_of_range")]:
-        with pytest.raises(OfepError) as err:
+        with pytest.raises(Nasa95Error) as err:
             app.execute("set.from_geometry", **params)
         assert err.value.code == code and total(app) == before, params
 
@@ -300,7 +300,7 @@ def test_MSH_T02_background_job(app):
     """배경 메싱: 상태·진행률을 조회하고, 끝난 결과를 모델에 넣으면 동기 메싱과 같다. 되돌리기도 같다."""
     part = box(app, size=(40.0, 20.0, 10.0))
     assert app.execute("mesh.job_status") == {"state": "none"}
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.job_finish")
     assert e.value.code == "invalid_state"
     sync = app.execute("mesh.generate", id=part.id, size=1.0)
@@ -308,7 +308,7 @@ def test_MSH_T02_background_job(app):
     assert app.execute("project.info")["elements"] == 0
     r = app.execute("mesh.generate", id=part.id, size=1.0, background=True)
     assert r == {"job": "mesh", "part": part.id, "state": "running", "size": 1.0}
-    with pytest.raises(OfepError) as e:  # 한 번에 하나
+    with pytest.raises(Nasa95Error) as e:  # 한 번에 하나
         app.execute("mesh.generate", id=part.id, size=1.0, background=True)
     assert e.value.code == "busy"
     assert app.execute("project.info")["elements"] == 0  # 도는 동안 모델은 그대로
@@ -321,7 +321,7 @@ def test_MSH_T02_background_job(app):
     assert (f["nodes"], f["elements"], f["shape"]) == (sync["nodes"], sync["elements"], sync["shape"])
     assert app.execute("project.info")["elements"] == sync["elements"] and history_len(app) == n + 1
     assert app.execute("mesh.job_status")["applied"] is True
-    with pytest.raises(OfepError):  # 두 번 넣지 못한다
+    with pytest.raises(Nasa95Error):  # 두 번 넣지 못한다
         app.execute("mesh.job_finish")
     app.undo()
     assert app.execute("project.info")["elements"] == 0
@@ -340,7 +340,7 @@ def test_MSH_T02_background_cancel_and_geometry_change(app):
     assert app.execute("mesh.job_cancel")["cancelled"] is True
     s, _ = wait_job(app)
     assert s["state"] == "cancelled" and s["error"]["code"] == "cancelled"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.job_finish")
     assert e.value.code == "cancelled"
     assert app.execute("mesh.job_cancel") == {"cancelled": False}
@@ -350,7 +350,7 @@ def test_MSH_T02_background_cancel_and_geometry_change(app):
     part.features.create_box(size=[1.0, 1.0, 1.0])  # 메싱하는 동안 형상 수정(피처 추가)
     s, _ = wait_job(app)
     assert s["state"] == "done"
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.job_finish")
     assert e.value.code == "geometry_changed"
     assert app.execute("project.info")["elements"] == 0
@@ -369,7 +369,7 @@ def test_MSH_T07_import_refined_mesh(app, tmp_path, monkeypatch):
     ccx = _ccx()
     if ccx is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", ccx)
+    monkeypatch.setenv("NASA95_CCX", ccx)
     part = box(app, size=(40.0, 10.0, 10.0))
     app.execute("mesh.generate", id=part.id, size=4.0, order=2)
     mat = app.model.materials.create(name="STEEL")
@@ -387,7 +387,7 @@ def test_MSH_T07_import_refined_mesh(app, tmp_path, monkeypatch):
     s.outputs.create_element_file(variables=["S"])
     app.execute("deck_block.create", parent=s.id, text="*REFINE MESH, LIMIT=0.5\nS\n")  # 모델에 없는 카드는 보존 블록으로 넣는다
     before = app.execute("mesh.statistics")
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.import_refined", id=case.id)
     assert e.value.code == "invalid_state"
     run = app.execute("case.run", id=case.id, wait=True)
@@ -455,12 +455,12 @@ def test_MSH_T02_hex_mapped(app):
     cyl = app.model.parts.create(name="CYL")
     cyl.features.create_cylinder(radius=5.0, height=10.0)
     before = app.execute("mesh.statistics")["elements"]
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.generate", id=cyl.id, method="hex_mapped")
     assert e.value.code == "not_block" and app.execute("mesh.statistics")["elements"] == before  # 실패 보고, 기존 메시 유지(MSH-T02-12)
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("mesh.generate", id=part.id, method="hex_mapped", divisions=[0, 1, 1])
-    with pytest.raises(OfepError):
+    with pytest.raises(Nasa95Error):
         app.execute("mesh.generate", id=part.id, method="hex_mapped", divisions=[1, 1])
 
 
@@ -471,7 +471,7 @@ def test_E2E_hex_mapped_cantilever(app, tmp_path, monkeypatch):
     ccx = _ccx()
     if ccx is None:
         pytest.skip("ccx 실행 파일이 없습니다")
-    monkeypatch.setenv("OFEP_CCX", ccx)
+    monkeypatch.setenv("NASA95_CCX", ccx)
     part = box(app, size=(100.0, 10.0, 10.0))
     app.execute("mesh.generate", id=part.id, method="hex_mapped", divisions=[20, 2, 2], element_type="C3D8I")
     mat = app.model.materials.create(name="STEEL")
@@ -545,7 +545,7 @@ def test_MSH_T02_mesh_controls(app):
     app.model.mesh_controls.create_curvature(safety=8.0)
     fine = app.execute("mesh.generate", id=cyl.id, size=20.0)["elements"]
     assert fine > 1.5 * coarse
-    with pytest.raises(OfepError) as e:
+    with pytest.raises(Nasa95Error) as e:
         app.model.mesh_controls.create_local_size(target={"type": "geometry", "ids": [[cyl.id, "edge", 99]]}, size=1.0)
         app.execute("mesh.generate", id=cyl.id)
     assert e.value.code == "not_found"
@@ -642,7 +642,7 @@ def test_MSH_T02_06_15_line_mesh(app):
     xyz = coords(app)
     assert sorted(round(p[0], 9) for p in xyz.values()) == [float(i * 10) for i in range(11)]
     assert app.execute("mesh.statistics")["by_type"] == {"B31": 10}
-    with pytest.raises(OfepError) as e:  # 면이 없는데 2D 를 요구하면 오류
+    with pytest.raises(Nasa95Error) as e:  # 면이 없는데 2D 를 요구하면 오류
         app.execute("mesh.generate", id=part.id, size=10.0, dimension=2)
     assert e.value.code == "invalid_state"
     # 반원(MSH-T02-15): 반지름 50, 10 분할. 노드가 원호 위(중심에서 50), 요소 10개. 2차는 가운데 절점도 원호 위

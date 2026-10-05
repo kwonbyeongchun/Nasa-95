@@ -1,9 +1,12 @@
 // 프로퍼티(섹션), 구속·연결, 접촉.
 // 속성은 CalculiX 의 섹션·구속 키워드가 받는 값을 솔버 중립 이름으로 둔 것이다.
 #include "kinds.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 
-namespace ofep::kinds {
+#include <algorithm>
+#include <cmath>
+
+namespace nasa95::kinds {
 
 namespace {
 
@@ -11,21 +14,22 @@ F material() { return F("material", "ref", "재료").ref("material").req(); }
 F orientation() { return F("orientation", "ref", "방향").ref("orientation"); }
 F elements() { return target("target", "할당할 요소", kElements); }
 
-// 보 단면 종류별 치수 개수 (*BEAM SECTION, SECTION=)
-int beam_dims(const std::string& section) {
-  if (section == "rect" || section == "circ") return 2;  // 두 방향 치수(원형은 두 주축 길이)
-  if (section == "pipe") return 2;                        // 외경 반지름, 두께
-  if (section == "box") return 6;                         // a, b, t1, t2, t3, t4
-  return 5;                                               // general: A, I11, I12, I22, 전단 계수
-}
-
 void check_beam(const Model&, const Object& o) {
   if (o.props.value("type", std::string()) != "beam") return;
   if (!o.props.contains("section") || !o.props.contains("dimensions")) return;
-  const int n = beam_dims(o.props["section"].get<std::string>());
+  const std::string section = o.props["section"].get<std::string>();
+  const int n = beam_section_dims(section);
   if (static_cast<int>(o.props["dimensions"].size()) != n)
     throw Error("invalid_param_type", "이 단면 종류의 치수는 " + std::to_string(n) + "개여야 합니다",
                 {{"param", "dimensions"}, {"object", o.id}});
+  if (beam_section_composite(section)) {
+    // 형강 치수 h, b, tw, tf: 두께가 바깥 치수 안에 들어가야 부분 단면이 겹치지 않는다
+    const std::vector<double> d = o.props["dimensions"].get<std::vector<double>>();
+    const bool two_flanges = section == "I" || section == "C";
+    if (d[2] >= d[1] || (two_flanges ? 2 * d[3] : d[3]) >= d[0])
+      throw Error("invalid_param_type", "형강 치수가 맞지 않습니다: 웨브 두께(tw) < 폭(b), 플랜지 두께(tf)" + std::string(two_flanges ? "×2" : "") + " < 높이(h)",
+                  {{"param", "dimensions"}, {"object", o.id}});
+  }
 }
 
 }  // namespace
@@ -59,10 +63,10 @@ void register_property(Schema& s) {
           F("offset", "number", "오프셋(두께 단위)")}},
         {"beam",  // *BEAM SECTION
          {material(), orientation(),
-          F("section", "string", "단면 종류").req().one_of({"rect", "circ", "pipe", "box", "general"}).ex("rect"),
-          F("dimensions", "number_list", "단면 치수(종류에 따라 개수가 다르다)").req().gt(0).unit("length").ex({20.0, 10.0}),
-          F("direction", "vector3", "단면 1축 방향").ex({0.0, 0.0, 1.0}),
-          F("offset1", "number", "1축 방향 오프셋(치수 단위)"), F("offset2", "number", "2축 방향 오프셋(치수 단위)")}},
+          F("section", "string", "단면 종류(I=H 형강·T·L·C 는 직사각형 부분 단면의 합성보로 덱에 나간다)").req().one_of({"rect", "circ", "pipe", "box", "general", "I", "T", "L", "C"}).ex("rect"),
+          F("dimensions", "number_list", "단면 치수(종류에 따라 개수가 다르다: rect·circ 2, pipe 2, box 6, general 5, I·T·L·C 4 = h, b, tw, tf)").req().gt(0).unit("length").ex({20.0, 10.0}),
+          F("direction", "vector3", "단면 1축 방향(형강은 웨브·높이 방향. 솔버 기본 (0,0,-1))").ex({0.0, 0.0, 1.0}),
+          F("offset1", "number", "1축 방향 오프셋(두께 단위, 형강은 높이 h 단위)"), F("offset2", "number", "2축 방향 오프셋(두께 단위, 형강은 폭 b 단위)")}},
         {"truss", {material(), F("area", "number", "단면적").req().gt(0).unit("area")}},
         {"spring",  // *SPRING
          {F("stiffness", "number", "강성(선형)").unit("stiffness"),
@@ -169,4 +173,63 @@ void register_property(Schema& s) {
   }
 }
 
-}  // namespace ofep::kinds
+}  // namespace nasa95::kinds
+
+namespace nasa95 {
+
+int beam_section_dims(const std::string& section) {
+  if (section == "rect" || section == "circ") return 2;  // 두 방향 치수(원형은 두 주축 길이)
+  if (section == "pipe") return 2;                        // 외경 반지름, 두께
+  if (section == "box") return 6;                         // a, b, t1, t2, t3, t4
+  if (beam_section_composite(section)) return 4;          // h, b, tw, tf
+  return 5;                                               // general: A, I11, I12, I22, 전단 계수
+}
+
+bool beam_section_composite(const std::string& section) { return section == "I" || section == "T" || section == "L" || section == "C"; }
+
+std::vector<BeamRect> beam_section_rects(const std::string& section, const std::vector<double>& dims) {
+  std::vector<BeamRect> r;
+  if (section == "rect" || section == "circ") {
+    if (dims.size() >= 2) r.push_back({dims[0], dims[1], 0, 0});
+  } else if (section == "box") {  // 속 빈 각형: 벽 4개(a, b, t1 +1축 벽, t2 +2축 벽, t3 -1축 벽, t4 -2축 벽 — 매뉴얼 6.3.2). 두께 0 인 벽은 없다(U·C 형)
+    if (dims.size() >= 6) {
+      const double a = dims[0], b = dims[1], t1 = dims[2], t2 = dims[3], t3 = dims[4], t4 = dims[5];
+      if (t1 > 0) r.push_back({t1, b, (a - t1) / 2, 0});
+      if (t3 > 0) r.push_back({t3, b, -(a - t3) / 2, 0});
+      const double inner = a - std::max(t1, 0.0) - std::max(t3, 0.0);
+      if (t2 > 0 && inner > 0) r.push_back({inner, t2, (std::max(t3, 0.0) - std::max(t1, 0.0)) / 2, (b - t2) / 2});
+      if (t4 > 0 && inner > 0) r.push_back({inner, t4, (std::max(t3, 0.0) - std::max(t1, 0.0)) / 2, -(b - t4) / 2});
+    }
+  } else if (section == "pipe") {
+    if (!dims.empty()) r.push_back({2 * dims[0], 2 * dims[0], 0, 0});  // 솔버가 펼치는 외접 정사각형
+  } else if (dims.size() >= 4) {
+    const double h = dims[0], b = dims[1], tw = dims[2], tf = dims[3];
+    if (section == "I") {  // 플랜지 둘(폭 b) + 웨브(높이 h - 2tf)
+      r.push_back({tf, b, (h - tf) / 2, 0});
+      r.push_back({tf, b, -(h - tf) / 2, 0});
+      r.push_back({h - 2 * tf, tw, 0, 0});
+    } else if (section == "T") {  // 플랜지가 +1축 쪽
+      r.push_back({tf, b, (h - tf) / 2, 0});
+      r.push_back({h - tf, tw, -tf / 2, 0});
+    } else if (section == "L") {  // 세로 다리(1축, 두께 tw)가 -2축 쪽, 가로 다리(두께 tf)가 -1축 쪽
+      r.push_back({h, tw, 0, -(b - tw) / 2});
+      r.push_back({tf, b - tw, -(h - tf) / 2, tw / 2});
+    } else if (section == "C") {  // 웨브(높이 h)가 -2축 쪽, 플랜지 둘이 +2축으로 뻗는다
+      r.push_back({h, tw, 0, -(b - tw) / 2});
+      r.push_back({tf, b - tw, (h - tf) / 2, tw / 2});
+      r.push_back({tf, b - tw, -(h - tf) / 2, tw / 2});
+    }
+  }
+  return r;
+}
+
+std::pair<double, double> beam_section_extent(const std::string& section, const std::vector<double>& dims) {
+  double e1 = 0, e2 = 0;
+  for (const BeamRect& q : beam_section_rects(section, dims)) {
+    e1 = std::max(e1, 2 * (std::fabs(q.c1) + q.t1 / 2));
+    e2 = std::max(e2, 2 * (std::fabs(q.c2) + q.t2 / 2));
+  }
+  return {e1, e2};
+}
+
+}  // namespace nasa95

@@ -1,7 +1,7 @@
 """모든 테스트 공통.
 
-- 프로그램 설정 파일을 임시 폴더로 돌려 사용자의 실제 설정(APPDATA 아래 open-fep)을 건드리지 않는다.
-- 보고서용 계측(환경 변수 OFEP_REPORT_DIR 가 있을 때): 테스트마다 기능 ID 마커·결과를 `tests.json` 에,
+- 프로그램 설정 파일을 임시 폴더로 돌려 사용자의 실제 설정(APPDATA 아래 NASA-95)을 건드리지 않는다.
+- 보고서용 계측(환경 변수 NASA95_REPORT_DIR 가 있을 때): 테스트마다 기능 ID 마커·결과를 `tests.json` 에,
   App.execute 호출을 명령별 성공·실패 수로 `api-calls.json` 에 남긴다(.agent/tools/gen_test_report.py 가 읽는다).
 """
 import json
@@ -12,21 +12,21 @@ from pathlib import Path
 
 import pytest
 
-_REPORT_DIR = os.environ.get("OFEP_REPORT_DIR")
+_REPORT_DIR = os.environ.get("NASA95_REPORT_DIR")
 _tests: dict[str, dict] = {}
 _calls: dict[str, dict] = {}
 
 
 @pytest.fixture(autouse=True)
 def _isolated_settings(tmp_path, monkeypatch):
-    monkeypatch.setenv("OFEP_SETTINGS", str(tmp_path / "settings.json"))
+    monkeypatch.setenv("NASA95_SETTINGS", str(tmp_path / "settings.json"))
 
 
 def pytest_configure(config):
     if not _REPORT_DIR:
         return
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
-    from openfep import api
+    from nasa95 import api
 
     original = api.App.execute
 
@@ -34,7 +34,7 @@ def pytest_configure(config):
         entry = _calls.setdefault(command, {"ok": 0, "error": 0, "codes": {}})
         try:
             r = original(self, command, params, **kw)
-        except api.OfepError as e:
+        except api.Nasa95Error as e:
             entry["error"] += 1
             entry["codes"][e.code] = entry["codes"].get(e.code, 0) + 1
             raise

@@ -47,7 +47,7 @@ def install(root):
         try:
             shutil.copy2(binary, installed)
         except PermissionError as exc:
-            raise RuntimeError("UI가 바인딩을 사용 중입니다. open-fep 창을 닫고 설치를 다시 실행하세요.") from exc
+            raise RuntimeError("UI가 바인딩을 사용 중입니다. NASA-95 창을 닫고 설치를 다시 실행하세요.") from exc
     shutil.copy2(source / "2.9.5/LICENSE", target / "LICENSE")
     (target / "__init__.py").write_text('''"""SARibbon v2.9.5 / PySide6 6.11.1 (MIT)."""
 import os

@@ -7,10 +7,10 @@
 #include <fstream>
 #include <sstream>
 
-#include "ofep/error.hpp"
-#include "ofep/results.hpp"
+#include "nasa95/error.hpp"
+#include "nasa95/results.hpp"
 
-namespace ofep {
+namespace nasa95 {
 
 namespace {
 
@@ -345,4 +345,4 @@ std::vector<double> derived_values(const ResultField& f, const std::string& name
   return out;
 }
 
-}  // namespace ofep
+}  // namespace nasa95

@@ -11,8 +11,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QPoint
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QToolButton
-from openfep import App
-from openfep.ui import MainWindow
+from nasa95 import App
+from nasa95.ui import MainWindow
 
 pytestmark = [pytest.mark.skipif(sys.platform != "win32", reason="Windows native frame"),
               pytest.mark.feature("RND-02")]

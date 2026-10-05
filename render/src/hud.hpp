@@ -1,9 +1,9 @@
 #pragma once
 #include <cctype>
 #include <map>
-#include "ofep/render.hpp"
+#include "nasa95/render.hpp"
 
-namespace ofep::render_detail {
+namespace nasa95::render_detail {
 
 inline const char* glyph(char c) {
   static const std::map<char, const char*> font = {
@@ -62,4 +62,4 @@ struct Hud {
   static double text_width(const std::string& s, double scale = 2.0) { return 6.0 * scale * static_cast<double>(s.size()); }
 };
 
-}  // namespace ofep::render_detail
+}  // namespace nasa95::render_detail

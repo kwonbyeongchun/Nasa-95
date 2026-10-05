@@ -1,10 +1,10 @@
 #include "navigation_cube.hpp"
-#include "ofep/error.hpp"
+#include "nasa95/error.hpp"
 #include <algorithm>
 #include <cmath>
 #include <set>
 
-namespace ofep::render_detail {
+namespace nasa95::render_detail {
 namespace {
 using V3 = std::array<double, 3>;
 V3 add(const V3& a, const V3& b) { return {a[0]+b[0], a[1]+b[1], a[2]+b[2]}; }
@@ -233,4 +233,4 @@ CubeTarget navigation_cube_target(const std::string& name) {
   throw Error("invalid_value", "알 수 없는 방향 큐브 뷰입니다", {{"name", name}});
 }
 
-}  // namespace ofep::render_detail
+}  // namespace nasa95::render_detail
