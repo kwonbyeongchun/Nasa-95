@@ -466,7 +466,7 @@ class Workspace:
         self._decorate_tree()
         self.legend.update()
         self._apply_view_background()
-        self.ribbon.native.setWindowTitleBackgroundBrush(QColor(self.theme.colors["panel"]))
+        self.ribbon.native.setWindowTitleBackgroundBrush(QColor(self.theme.colors["ribbon"]))
         self.ribbon.native.setTabBarBaseLineColor(QColor(self.theme.colors["border"]))
         self.setWindowIcon(icon("box", self.theme.colors["blue"]))
 

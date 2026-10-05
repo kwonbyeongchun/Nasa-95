@@ -1,0 +1,124 @@
+# NASA-95 빌드 → 배포본(설치 파일 + zip) → GitHub Release 에 올린다.
+#   - 태그 v* 를 푸시하면 빌드해서 그 태그의 Release 에 NASA-95-<버전>-setup.exe 와 NASA-95-<버전>-win64.zip 을 첨부한다.
+#   - 수동 실행(workflow_dispatch)은 빌드만 하고 아티팩트로 남긴다(publish 를 켜면 입력한 버전으로 Release 도 만든다).
+# 외부 의존성은 scripts\ci-deps.ps1(OpenCASCADE 공식 빌드, Netgen 소스 빌드)·setup_ribbon.ps1(SARibbon 바인딩)이 준비하고 캐시한다.
+# 솔버(CalculiX·OpenSees·MyStran)는 넣지 않는다(별도 실행 파일).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "배포 버전(예: 0.1.0). 비우면 CMakeLists 의 버전"
+        required: false
+        default: ""
+      publish:
+        description: "GitHub Release 로 올린다(태그 v<버전> 을 만든다)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  PYTHON_VERSION: "3.12"
+  VULKAN_SDK_VERSION: "latest"
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: src
+    steps:
+      - name: 소스
+        uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          architecture: x64
+
+      - name: 버전 정하기
+        id: ver
+        run: |
+          $v = "${{ github.event.inputs.version }}"
+          if ("${{ github.ref_type }}" -eq "tag") { $v = "${{ github.ref_name }}".TrimStart("v") }
+          if (-not $v) { $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(\S+ VERSION ([0-9.]+)').Matches[0].Groups[1].Value }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "NASA-95 $v"
+
+      - name: Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: ${{ env.VULKAN_SDK_VERSION }}
+          cache: true
+
+      - name: 의존성 캐시 (OpenCASCADE·Netgen)
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/occt
+            third_party/netgen/install
+            third_party/netgen/src/LICENSE
+          key: deps-occt8.0.1-netgen6.2.2608-vs2022-v1
+
+      - name: 의존성 준비 (OpenCASCADE 내려받기, Netgen 빌드)
+        run: .\scripts\ci-deps.ps1
+
+      - name: .venv
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python -m pip install --upgrade pip
+          .venv\Scripts\python -m pip install pybind11 pytest numpy PySide6==6.11.1
+
+      - name: SARibbon 캐시
+        id: ribbon-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            third_party/saribbon/2.9.5/LICENSE
+            third_party/saribbon/build-qt6.11.1/saribbon.pyd
+          key: saribbon2.9.5-qt6.11.1-py3.12-v1
+
+      - name: SARibbon 바인딩 (캐시 없으면 Qt 받아 빌드)
+        run: |
+          if ("${{ steps.ribbon-cache.outputs.cache-hit }}" -eq "true") {
+            .venv\Scripts\python scripts\ribbon_dependency.py install (Resolve-Path ..\third_party)
+          } else {
+            .\scripts\setup_ribbon.ps1
+          }
+          .venv\Scripts\python -c "from PySideSARibbon import saribbon; print('SARibbon', saribbon.SARibbonBar.versionString())"
+
+      - name: 빌드
+        run: .\scripts\build.ps1 -Fresh
+
+      - name: 배포본 (zip + 설치 파일)
+        run: .\scripts\package.ps1 -Version ${{ steps.ver.outputs.version }}
+
+      - name: 아티팩트
+        uses: actions/upload-artifact@v4
+        with:
+          name: NASA-95-${{ steps.ver.outputs.version }}
+          path: |
+            src/dist/*.exe
+            src/dist/*.zip
+          if-no-files-found: error
+
+      - name: GitHub Release
+        if: github.ref_type == 'tag' || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: NASA-95 ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: |
+            src/dist/NASA-95-${{ steps.ver.outputs.version }}-setup.exe
+            src/dist/NASA-95-${{ steps.ver.outputs.version }}-win64.zip

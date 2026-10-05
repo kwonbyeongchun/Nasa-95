@@ -18,6 +18,15 @@ python -m venv --system-site-packages .venv
 
 UI 실행: `nasa-95.bat` 또는 `.\scripts\ui.ps1`.
 
+## 배포본과 설치 파일
+
+```powershell
+.\scripts\ci-deps.ps1        # 외부 의존성 준비(OpenCASCADE 8.0.1 내려받기, Netgen 소스 빌드, Vulkan SDK 연결) — 새 PC·CI
+.\scripts\package.ps1        # dist\NASA-95\ (임베디드 Python 포터블) + dist\NASA-95-<버전>-win64.zip + NASA-95-<버전>-setup.exe (Inno Setup)
+```
+GitHub Actions(`.github/workflows/release.yml`): 태그 `v<버전>` 을 푸시하면 Windows 러너가 빌드해 그 태그의 Release 에 설치 파일과 zip 을 올린다.
+수동 실행은 아티팩트만 남긴다(`publish` 를 켜면 Release 도 만든다). 솔버(CalculiX·OpenSees·MyStran)는 배포본에 넣지 않는다 — 설정에서 실행 파일 경로를 지정한다.
+
 ### 리본 UI 의존성
 
 UI는 SARibbon v2.9.5(MIT)의 공식 PySide6 바인딩을 사용한다. Windows x64 / Python 3.12 / PySide6·Qt 6.11.1로 버전을 맞춘다.

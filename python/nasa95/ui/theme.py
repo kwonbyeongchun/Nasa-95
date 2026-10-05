@@ -10,7 +10,7 @@ COLORS = {
     # VS Code Light Modern / Dark Modern workbench 색상 기준.
     # https://github.com/microsoft/vscode/tree/main/extensions/theme-defaults/themes
     "light": dict(bg="#FFFFFF", viewport="#FFFFFF", panel="#F8F8F8", input="#FFFFFF", text="#3B3B3B", muted="#616161",
-                  border="#E5E5E5", inputborder="#CECECE", hover="#F2F2F2", selected="#E8E8E8", ribbon="#C8C8C8", group_title="#B8B8B8",
+                  border="#E5E5E5", inputborder="#CECECE", hover="#F2F2F2", selected="#E8E8E8", ribbon="#F3F3F3", group_title="#E9E9E9",
                   accent="#005FB8", error="#C72E0F", disabled="#909090", scroll="#C1C1C1",
                   blue="#005FB8", green="#388A34", orange="#B07800", purple="#8B46A8"),
     "dark": dict(bg="#1F1F1F", viewport="#3A3A3A", panel="#181818", input="#313131", text="#CCCCCC", muted="#9D9D9D",

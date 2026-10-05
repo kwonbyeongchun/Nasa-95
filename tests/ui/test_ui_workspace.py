@@ -162,7 +162,7 @@ def test_UI_saribbon_titlebar_theme_and_window_controls(window):
     qt.processEvents()
     assert isinstance(w, saribbon.SARibbonMainWindow)
     assert w.ribbon.native.isTabOnTitle()
-    for mode, background, foreground in (("dark", "#181818", "#cccccc"), ("light", "#c8c8c8", "#3b3b3b")):
+    for mode, background, foreground in (("dark", "#181818", "#cccccc"), ("light", "#f3f3f3", "#3b3b3b")):
         w.theme.set_mode(mode)
         qt.processEvents()
         assert not w.styleSheet()

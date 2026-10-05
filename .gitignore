@@ -12,3 +12,4 @@ python/nasa95/*.pyd.*
 python/nasa95/*.pyd
 *.pyd.old*
 *.pyd.inuse
+dist/
