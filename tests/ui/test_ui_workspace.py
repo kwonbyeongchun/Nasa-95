@@ -27,6 +27,48 @@ def branch(w, kind):
     return next(w.tree.topLevelItem(i) for i in range(w.tree.topLevelItemCount()) if w.tree.topLevelItem(i).text(1) == kind)
 
 
+@pytest.mark.feature("RND-02")
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_RND_T04_26_result_controls_fit_narrow_dock(window, mode):
+    w, qt = window
+    w.theme.set_mode(mode)
+    w.show()
+    w.set_workspace("result")
+    r = w.result_ws
+    r._loading = True  # 레이아웃 검사에는 솔버 결과가 필요하지 않다.
+    r.controls.setEnabled(True)
+    r.title.setText("결과 123456 · 케이스 123456")
+    r.frame.setMaximum(3118)
+    r.frame.setValue(339)
+    r.frame_info.setText("스텝 1 증분 237 · 2.37")
+    r.field.addItem("VERY_LONG_RESULT_FIELD_WITHOUT_SPACES")
+    r.component.addItem("VERY_LONG_COMPONENT_WITHOUT_SPACES")
+    r.summary.setText("X:/project_files_git/open-fep/test_file/20_OPENSEES_11_rc_frame_el/"
+                      + "long_result_name_" * 12 + ".frd\n절점 20 · 요소 27 · 프레임 3118")
+    widgets = (r.title, r.field, r.component, r.frame, r.frame_slider, r.frame_info,
+               r.deform, r.colormap, r.levels, r.play, r.hide_button, r.summary)
+    # 짧은 창에서 세로 스크롤이 생겨도 오른쪽 버튼·입력창이 잘리면 안 된다.
+    w.resize(1280, 540)
+    for width in (256, 230, 400, 230):
+        w.resizeDocks([w.property_dock], [width], Qt.Orientation.Horizontal)
+        qt.processEvents()
+        qt.processEvents()
+        viewport = r.controls.viewport()
+        assert w.property_dock.width() == width
+        assert not r.controls.horizontalScrollBar().isVisible()
+        assert r.controls.horizontalScrollBar().maximum() == 0
+        assert r.controls.widget().width() == viewport.width()
+        for widget in widgets:
+            left = widget.mapTo(viewport, QPoint()).x()
+            assert widget.isVisible() and widget.width() > 0
+            assert 0 <= left and left + widget.width() <= viewport.width()
+        assert r.summary.height() >= r.summary.heightForWidth(r.summary.width())
+    assert r.controls.verticalScrollBar().maximum() > 0
+    r.controls.ensureWidgetVisible(r.hide_button)
+    qt.processEvents()
+    assert viewport.rect().contains(r.hide_button.mapTo(viewport, r.hide_button.rect().center()))
+
+
 @pytest.mark.feature("CAS-01")
 @pytest.mark.parametrize("entry", ["double_click", "edit"])
 def test_CAS_T01_23_existing_case_edit_opens_two_trees(window, entry):

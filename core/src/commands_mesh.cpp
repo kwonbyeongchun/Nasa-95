@@ -219,6 +219,8 @@ void register_mesh_commands(App& app) {
       if (has(p, "part")) {
         check_value(F("part", "ref", "").ref("mesh_part"), p["part"], &a.model());
         part = p["part"].get<Id>();
+      } else {
+        part = a.default_mesh_part();  // 요소는 반드시 메시 파트에(D19): 파트를 주지 않으면 기본 파트 MESH
       }
       const std::string type = p.value("type", std::string());
       std::vector<Element> elems(count);
@@ -268,6 +270,21 @@ void register_mesh_commands(App& app) {
       }
       a.mesh().replace_elements(elems);  // 형상에 맞지 않는 타입이면 여기서 거부된다
       return Json{{"count", elems.size()}};
+    };
+    app.register_command(std::move(c));
+  }
+  {
+    // 요소를 다른 메시 파트로 옮긴다. 요소는 메시 파트 없이 있을 수 없으므로(D19) part 는 필수. 파트 없이 만든 요소는 코어가 기본 파트 "MESH" 에 넣는다
+    CommandSpec c = base("mesh.set_part", 'C', "요소를 메시 파트로 옮긴다(요소는 반드시 메시 파트에 속한다 — 파트 없이 만들면 기본 파트 MESH 에 들어간다)", "MSH-01, WT-01");
+    c.params = {F("ids", "integer_list", "대상 요소").call_req().ex(Json::array({1})), F("part", "ref", "메시 파트").ref("mesh_part").call_req()};
+    c.fn = [](App& a, const Json& p) {
+      check_value(F("part", "ref", "").ref("mesh_part"), p["part"], &a.model());
+      const Id part = p["part"].get<Id>();
+      std::vector<Element> elems;
+      for (const Json& id : p["ids"]) elems.push_back(a.mesh().element(id.get<Id>()));
+      for (Element& e : elems) e.part = part;
+      a.mesh().replace_elements(elems);
+      return Json{{"count", elems.size()}, {"part", part}};
     };
     app.register_command(std::move(c));
   }

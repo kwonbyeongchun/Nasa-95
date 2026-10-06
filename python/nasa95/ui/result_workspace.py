@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider,
-                               QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QSizePolicy, QSpinBox, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ..api import App, Nasa95Error
 
@@ -47,6 +47,7 @@ class ResultWorkspace(QObject):
         inner.setObjectName("resultControls")
         self.controls = QScrollArea()
         self.controls.setWidgetResizable(True)
+        self.controls.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.controls.setFrameShape(QFrame.Shape.NoFrame)
         self.controls.setWidget(inner)
         self.controls.setMinimumHeight(0)
@@ -62,6 +63,8 @@ class ResultWorkspace(QObject):
         col.addWidget(self.outdated)
         form = QFormLayout()
         form.setContentsMargins(0, 4, 0, 0)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.field = QComboBox()
         self.component = QComboBox()
         self.frame = QSpinBox()
@@ -106,8 +109,16 @@ class ResultWorkspace(QObject):
         self.summary.setWordWrap(True)
         col.addWidget(self.summary)
         col.addStretch(1)
+        # 긴 결과 이름·경로·프레임 설명이 도크 폭을 늘리지 않도록 높이로 확장한다.
+        for label in (self.title, self.outdated, self.frame_info, self.summary):
+            label.setWordWrap(True)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         for name in ("field", "component", "colormap"):
-            getattr(self, name).setAccessibleName(f"결과 {name}")
+            combo = getattr(self, name)
+            combo.setAccessibleName(f"결과 {name}")
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(8)
+            combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.field.currentIndexChanged.connect(self._field_changed)
         self.component.currentIndexChanged.connect(lambda _i: self.apply())
         self.frame.valueChanged.connect(self._frame_changed)

@@ -201,17 +201,25 @@ def test_CAS_T01_21_failed_save_rolls_back_and_run_validation(scene, monkeypatch
 def test_CAS_T01_22_unassigned_and_existing_element_scope(scene):
     app, parts, loads, bc, dialog, qt = scene
     raw = app.execute("mesh.elements_create", shape="line2", connectivity=[[1, 3]])["first"]
+    default = next(m["id"] for m in app.execute("mesh_part.list") if m["name"] == "MESH")  # 파트 없이 만든 요소는 기본 파트 MESH 에(D19)
+    assert app.execute("mesh.elements", ids=[raw])[0]["part"] == default
     d = dialog()
-    add(d, ("mesh_part", 0))
+    add(d, ("mesh_part", default))
     d._apply()
     assert d.result_id, d.error.text()
     case = app.execute("case.get", id=d.result_id)
-    assert case["props"]["scope"] == {"type": "elements", "ids": [raw]}
+    assert case["props"]["scope"] == {"type": "parts", "ids": [default]}
     step = app.execute("step.list", parent=d.result_id)[0]
     edit = dialog(step=app.execute("step.get", id=step["id"]))
-    assert edit.selected_mesh() == [-1]
+    assert edit.selected_mesh() == [default]
     edit._apply()
     assert app.execute("case.get", id=d.result_id)["props"]["scope"] == case["props"]["scope"]
+    # 요소 범위로 직접 지정한 기존 케이스는 "기존 지정 범위" 항목으로 보존된다
+    app.execute("case.update", id=d.result_id, scope={"type": "elements", "ids": [raw]})
+    edit2 = dialog(step=app.execute("step.get", id=step["id"]))
+    assert edit2.selected_mesh() == [-1]
+    edit2._apply()
+    assert app.execute("case.get", id=d.result_id)["props"]["scope"] == {"type": "elements", "ids": [raw]}
 
 
 @pytest.mark.feature("CAS-01")

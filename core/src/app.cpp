@@ -207,6 +207,25 @@ void App::revert(const Txn& t) {
   model_.apply_inverse(t.changes);
 }
 
+Id App::default_mesh_part() {
+  for (const Object* o : model_.children(0, "mesh_part"))
+    if (o->name == "MESH" && !(o->props.contains("geometry") && o->props["geometry"].is_number())) return o->id;
+  return invoke("mesh_part.create", Json{{"name", "MESH"}})["id"].get<Id>();
+}
+
+void App::ensure_mesh_parts() {
+  std::vector<Element> orphans;
+  for (std::size_t i = 0; i < mesh_.element_count(); ++i) {
+    const Id pid = mesh_.part_at(i);
+    const Object* o = pid ? model_.find(pid) : nullptr;
+    if (!o || o->kind != "mesh_part") orphans.push_back(mesh_.element(mesh_.element_ids()[i]));
+  }
+  if (orphans.empty()) return;
+  const Id part = default_mesh_part();
+  for (Element& e : orphans) e.part = part;
+  mesh_.replace_elements(orphans);
+}
+
 void App::reapply(const Txn& t) {
   model_.apply_forward(t.changes);
   mesh_.apply_forward(t.mesh);
@@ -228,6 +247,12 @@ Json App::run_recorded(const CommandSpec& spec, const Json& params) {
       revert(g);
       emit(g.changes, g.mesh, true, "rollback", spec.name);
     }
+    throw;
+  }
+  try {
+    ensure_mesh_parts();  // 같은 기록 안에서 — Undo 하면 같이 되돌아간다
+  } catch (...) {
+    revert(Txn{0, spec.name, model_.end_record(), mesh_.end_record()});
     throw;
   }
   Txn t{0, spec.name, model_.end_record(), mesh_.end_record()};
@@ -422,8 +447,23 @@ void App::open(const std::string& path) {
     throw Error("invalid_file", std::string("프로젝트 파일의 내용이 올바르지 않습니다: ") + e.what(),
                 {{"path", path}});
   }
-  model_ = std::move(loaded);  // 여기까지 성공한 뒤에만 현재 모델을 바꾼다
+  // 옛 파일의 파트 없는 요소도 열기 통지 전에 보완한다. invoke에 필요한
+  // 변경 기록만 열고, 보완은 불러온 상태의 일부이므로 Undo 이력에는 넣지 않는다.
+  Model previous_model = std::move(model_);
+  Mesh previous_mesh = std::move(mesh_);
+  model_ = std::move(loaded);
   mesh_ = std::move(loaded_mesh);
+  try {
+    model_.begin_record();
+    mesh_.begin_record();
+    ensure_mesh_parts();
+    model_.end_record();
+    mesh_.end_record();
+  } catch (...) {
+    model_ = std::move(previous_model);
+    mesh_ = std::move(previous_mesh);
+    throw;  // 보완 실패 시에도 기존 모델·경로·이력·화면은 그대로 둔다.
+  }
   path_ = path;
   reset_history();
   emit({}, {}, false, "reset", "project.open");

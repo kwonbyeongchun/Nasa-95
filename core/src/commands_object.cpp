@@ -350,8 +350,18 @@ void add_common(App& app, const KindSpec& ks) {
             copy.props.erase("folder");
             m.replace(copy);
           }
+      std::size_t elements = 0;
+      if (kind == "mesh_part") {
+        // 요소는 메시 파트 없이 있을 수 없다(D19): 파트를 지우면 그 요소와, 그 요소만 쓰던 노드를 함께 지운다
+        std::vector<Id> eids;
+        const Mesh& mesh = a.mesh();
+        for (std::size_t i = 0; i < mesh.element_count(); ++i)
+          if (ids.count(mesh.part_at(i))) eids.push_back(mesh.element_ids()[i]);
+        if (!eids.empty()) a.invoke("mesh.elements_delete", Json{{"ids", eids}, {"delete_unused_nodes", true}});
+        elements = eids.size();
+      }
       for (auto it = ids.rbegin(); it != ids.rend(); ++it) m.remove(*it);
-      return Json{{"deleted", std::vector<Id>(ids.begin(), ids.end())}};
+      return Json{{"deleted", std::vector<Id>(ids.begin(), ids.end())}, {"elements", elements}};
     };
     app.register_command(std::move(c));
   }

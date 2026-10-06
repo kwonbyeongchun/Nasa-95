@@ -56,6 +56,8 @@ class App {
 
   // 실행 중인 명령 안에서 다른 명령의 처리기를 부른다(입력 검증은 하고, 같은 Undo 단계에 들어간다).
   Json invoke(const std::string& name, const Json& params);
+  // 기본 메시 파트(이름 MESH, 형상 없음). 없으면 만든다 — 파트 없이 요소를 만드는 명령이 쓴다(D19)
+  Id default_mesh_part();
 
   void register_command(CommandSpec spec);
   void unregister_command(const std::string& name);  // external 명령만
@@ -111,7 +113,7 @@ class App {
   // 모델에 속하지 않는 실행 중 상태(솔버 실행 등). 저장·Undo 대상이 아니다.
   std::any& runtime(const std::string& key) { return runtime_[key]; }
 
-  static const char* version() { return "0.1.0"; }
+  static const char* version() { return "0.2.0"; }
   static const char* api_version() { return "0.1"; }
 
  private:
@@ -124,6 +126,8 @@ class App {
   };
 
   Json run_recorded(const CommandSpec& spec, const Json& params);
+  // 불변식(D19, 2026-10-06): 요소는 반드시 메시 파트에 속한다. 명령이 끝날 때 파트 없는(또는 없어진 파트의) 요소를 기본 메시 파트에 넣는다
+  void ensure_mesh_parts();
   Json run_readonly(const CommandSpec& spec, const Json& params);
   void push_txn(Txn t);
   void emit(const ChangeSet& cs, const MeshLog& mesh, bool inverse, const std::string& source, const std::string& command);

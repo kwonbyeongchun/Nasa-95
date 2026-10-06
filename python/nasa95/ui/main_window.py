@@ -8,7 +8,7 @@ import threading
 from typing import Callable
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFileDialog, QHBoxLayout, QInputDialog, QMainWindow, QMenu, QMessageBox, QPlainTextEdit,
                                QPushButton, QMenuBar, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QToolBar, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
@@ -323,13 +323,30 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         self._update_status()
         self.viewport.refresh()
         self._update_legend()
+        self._update_title()
+
+    def _update_title(self):
+        """창 제목·경로·상태 표시줄: 프로젝트 파일 이름과 수정 표시(*). 저장은 모델을 바꾸지 않아 통지가 없으므로 저장 뒤에도 따로 부른다."""
         info = self.app.execute("project.info")
-        self.setWindowTitle((pathlib.Path(info["path"]).name if info.get("path") else "새 프로젝트") +
-                            (" *" if info.get("modified") else "") + " — NASA-95")
         project_name = pathlib.Path(info["path"]).name if info.get("path") else "새 프로젝트"
+        self.setWindowTitle(project_name + (" *" if info.get("modified") else "") + " — NASA-95")
         self.breadcrumbs.setText(project_name + "  ›  3D 뷰")
         self.statusBar().showMessage(f"객체 {info['objects']} · 노드 {info['nodes']} · 요소 {info['elements']}" +
                                      (f" · {info['path']}" if info.get("path") else "") + (" (수정됨)" if info.get("modified") else ""))
+
+    def _pick_color(self, kind, oid):
+        from PySide6.QtWidgets import QColorDialog
+        cur = next((o["color"] for o in self.app.execute("view.object_colors").get(kind, []) if o["id"] == oid), [170, 170, 170])
+        c = QColorDialog.getColor(QColor(*cur), self, "표시 색")
+        if c.isValid():
+            self.app.execute("view.set_appearance", id=oid, color=[c.red(), c.green(), c.blue()])
+            self._decorate_tree()
+            self.viewport.refresh()
+
+    def _reset_color(self, oid):
+        self.app.execute("view.set_appearance", id=oid)
+        self._decorate_tree()
+        self.viewport.refresh()
 
     def _add_items(self, parent, items):
         for it in items:
@@ -427,6 +444,10 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
             menu.addAction("편집...", lambda: self._guard(self._edit_selected))
             menu.addAction("삭제", lambda: self._guard(self._delete_selected))
             menu.addAction("억제/해제", lambda: self._guard(self._toggle_suppress))
+            if kind in ("mesh_part", "material", "property", "part"):  # 표시 색(색 기준과 트리 아이콘에 같이 쓰인다)
+                menu.addSeparator()
+                menu.addAction("색 바꾸기…", lambda k=kind, o=oid: self._guard(lambda: self._pick_color(k, o)))
+                menu.addAction("기본 색으로", lambda o=oid: self._guard(lambda: self._reset_color(o)))
             children = [k for k, spec in kinds.items() if kind in spec["parents"]]
             if children:
                 menu.addSeparator()
@@ -454,6 +475,9 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         elif kind == "property" and sub == "beam":  # 보 프로퍼티 창: 단면 종류·치수·미리보기·1축 방향(D15)
             from .beam_dialog import BeamDialog
             dlg = BeamDialog(self.app, parent=self, selection=self._picked)
+        elif kind == "function":  # 함수 창: 표·그래프·파일 가져오기(사용자 요청 2026-10-06)
+            from .function_dialog import FunctionDialog
+            dlg = FunctionDialog(self.app, sub=sub, parent=self)
         else:
             dlg = ObjectDialog(self.app, kind, sub, parent_id, parent=self, selection=self._picked)
         if dlg.exec() and dlg.result_id:
@@ -512,6 +536,9 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         elif kind == "property" and obj["props"].get("type") == "beam":
             from .beam_dialog import BeamDialog
             dlg = BeamDialog(self.app, obj=obj, parent=self, selection=self._picked)
+        elif kind == "function":
+            from .function_dialog import FunctionDialog
+            dlg = FunctionDialog(self.app, obj=obj, parent=self)
         else:
             dlg = ObjectDialog(self.app, kind, obj=obj, parent=self, selection=self._picked)
         if dlg.exec():
@@ -557,6 +584,7 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
             path, _ = QFileDialog.getSaveFileName(self, "프로젝트 저장", "", "NASA-95 프로젝트 (*.nasa95)")
         if path:
             self.app.execute("project.save_as", path=path)
+            self._update_title()
 
     def _import_geometry(self):
         path, _ = QFileDialog.getOpenFileName(self, "형상 가져오기", "", "CAD (*.step *.stp *.iges *.igs *.brep);;모든 파일 (*)")

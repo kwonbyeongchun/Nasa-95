@@ -87,7 +87,7 @@ def test_MSH_T04_transform(app):
 @pytest.mark.feature("MSH-16")
 def test_MSH_T04_transform_copy_and_errors(app):
     part = app.model.mesh_parts.create(name="copy")
-    block(app, 2, 1, 1, size=(2.0, 1.0, 1.0))
+    block(app, 2, 1, 1, size=(2.0, 1.0, 1.0))  # 파트 없이 → 기본 파트 MESH(D19), "copy" 에는 들어가지 않는다
     r = app.execute("mesh.transform", ids=[1], mirror_point=[0, 0, 0], mirror_normal=[1, 0, 0], copy=True, copy_part=part.id)
     assert (r["nodes"], r["elements"]) == (8, 1) and info(app) == (20, 3)
     assert volume(app, part=part.id) == pytest.approx(1.0)  # 사본도 부피가 양수

@@ -286,8 +286,8 @@ def test_VIEW_T04_mesh_and_modes(app):
     front = app.view.render(W, H)[0][H // 2, W // 2, :3].astype(int)
     app.execute("view.standard", name="bottom")
     back = app.view.render(W, H)[0][H // 2, W // 2, :3].astype(int)
-    # 앞에서는 기본 색(회색), 뒤에서는 붉은 기가 돈다
-    assert front[0] == front[1] == front[2] and back[0] > back[2] + 20 and back[2] < front[2]
+    # 앞에서는 파트 색(요소는 늘 메시 파트에 속한다 D19 — 기본 파트 MESH 의 팔레트 0 색), 뒤에서는 붉은 기가 돈다
+    assert tuple(front) == PALETTE0 and (back[0] - back[2]) > (front[0] - front[2]) + 20 and back[2] < front[2]
     assert app.execute("view.pick", x=W // 2, y=H // 2, width=W, height=H)["kind"] == "element"
 
 
@@ -875,7 +875,7 @@ def test_VIEW_T08_appearance_mesh_options_tree_state(app):
     assert e.value.code == "invalid_param"
     mat = app.model.materials.create(name="M")
     with pytest.raises(Nasa95Error) as e:
-        app.execute("view.set_appearance", id=mat.id, color=[1, 2, 3])
+        app.execute("view.set_appearance", id=app.execute("load_set.create", name="LS")["id"], color=[1, 2, 3])  # 재료·프로퍼티는 색 가능(RND-T01-52), 하중 셋은 아님
     assert e.value.code == "wrong_kind"
     # 메시 옵션: 경계선 끄기 → 어두운 선 픽셀이 사라진다. 축소 → 그린 픽셀이 줄고 요소 사이가 벌어진다
     dark = lambda img: int(np.sum(np.all(img[:, :, :3] < 60, axis=2)))  # noqa: E731
@@ -1742,3 +1742,60 @@ def test_RND_T01_51_hollow_sections_display(app):
             ext = extent(drawn(img))
             assert ext[1] / ext[0] == pytest.approx(30.0 / 20.0, rel=0.08)  # 1축 지름 30(세로), 2축 20(가로)
     app.execute("view.mesh_options")
+
+
+@pytest.mark.feature("MSH-24")
+@pytest.mark.feature("PRP-13")
+@pytest.mark.feature("WT-25")
+def test_RND_T01_52_color_by_mesh_material_property(app):
+    """메시 파트·재료·프로퍼티마다 다른 색. 색 기준(part/material/property)에 따라 화면 요소 색 = 그 객체 색(view.object_colors), 지정 색 우선."""
+    from meshutil import block
+    m1 = app.execute("material.create", name="STEEL")["id"]
+    m2 = app.execute("material.create", name="CONC")["id"]
+    pa = app.execute("mesh_part.create", name="LEFT")["id"]
+    pb = app.execute("mesh_part.create", name="RIGHT")["id"]
+    block(app, 1, 1, 1, size=(10.0, 10.0, 10.0), part=pa)
+    block(app, 1, 1, 1, size=(10.0, 10.0, 10.0), origin=(20.0, 0.0, 0.0), part=pb)
+    pr1 = app.execute("property.create_solid", name="P1", material=m1, target={"type": "parts", "ids": [pa]})["id"]
+    pr2 = app.execute("property.create_solid", name="P2", material=m2, target={"type": "parts", "ids": [pb]})["id"]
+    oc = app.execute("view.object_colors")
+    for kind in ("mesh_part", "material", "property"):
+        cols = [tuple(o["color"]) for o in oc[kind]]
+        assert len(cols) == 2 and cols[0] != cols[1], kind
+    app.execute("view.display_mode", mode="shaded")
+    app.execute("view.standard", name="front")
+
+    def colors_now():
+        rgba = app.view.render(W, H)[0]
+        row = rgba[H // 2, :, :3].astype(int)
+        lit = [i for i in range(W) if row[i].sum() < 3 * 245]
+        left, right = row[lit[0] + 4], row[lit[-1] - 4]
+        return left, right
+
+    def hue(c):  # 음영과 무관한 색 비교: 정규화한 비율
+        c = np.asarray(c, float)
+        return c / c.sum()
+
+    def same(px, rgb):
+        return np.allclose(hue(px), hue(rgb), atol=0.02)
+
+    oc = app.execute("view.object_colors")
+    by = {k: {o["id"]: o["color"] for o in oc[k]} for k in ("mesh_part", "material", "property")}
+    l, r = colors_now()
+    assert oc["color_by"] == "part" and same(l, by["mesh_part"][pa]) and same(r, by["mesh_part"][pb])
+    app.execute("view.color_by", by="material")
+    l, r = colors_now()
+    assert same(l, by["material"][m1]) and same(r, by["material"][m2])
+    app.execute("view.color_by", by="property")
+    l, r = colors_now()
+    assert same(l, by["property"][pr1]) and same(r, by["property"][pr2])
+    # 재료 색 지정 → 재료별 화면·object_colors 에 반영. 재료에 alpha 는 오류, 지정 지우면 팔레트 색
+    app.execute("view.color_by", by="material")
+    app.execute("view.set_appearance", id=m2, color=[200, 40, 40])
+    assert next(o for o in app.execute("view.object_colors")["material"] if o["id"] == m2) == {"id": m2, "name": "CONC", "color": [200, 40, 40], "custom": True}
+    l, r = colors_now()
+    assert same(r, [200, 40, 40])
+    with pytest.raises(Nasa95Error):
+        app.execute("view.set_appearance", id=m1, alpha=0.5)
+    app.execute("view.set_appearance", id=m2)
+    assert next(o for o in app.execute("view.object_colors")["material"] if o["id"] == m2)["color"] == by["material"][m2]

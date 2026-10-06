@@ -124,8 +124,24 @@ Renderer& renderer(App& a) {
   return *s.renderer;
 }
 
-const std::array<std::array<std::uint8_t, 3>, 8> kPalette = {{{122, 162, 204}, {214, 158, 96}, {134, 190, 138}, {196, 136, 176},
-                                                             {186, 186, 110}, {120, 190, 190}, {208, 130, 130}, {160, 160, 200}}};
+const std::array<std::array<std::uint8_t, 3>, 12> kPalette = {{{122, 162, 204}, {214, 158, 96}, {134, 190, 138}, {196, 136, 176},
+                                                              {186, 186, 110}, {120, 190, 190}, {208, 130, 130}, {160, 160, 200},
+                                                              {228, 196, 92}, {104, 150, 120}, {176, 120, 92}, {150, 120, 210}}};
+
+// 객체 색(메시 파트·재료·프로퍼티·형상 파트): 지정한 색(view.set_appearance)이 있으면 그것, 없으면 그 종류 안의 순서로 팔레트.
+// 트리 아이콘과 화면의 색 기준(view.color_by)이 같은 색을 쓰게 하는 한 곳이다(view.object_colors)
+std::array<std::uint8_t, 3> object_color(const App& a, const Json& appearance, const std::string& kind, Id id) {
+  auto it = appearance.find(std::to_string(id));
+  if (it != appearance.end() && it->contains("color"))
+    return {static_cast<std::uint8_t>(std::clamp((*it)["color"][0].get<int>(), 0, 255)), static_cast<std::uint8_t>(std::clamp((*it)["color"][1].get<int>(), 0, 255)),
+            static_cast<std::uint8_t>(std::clamp((*it)["color"][2].get<int>(), 0, 255))};
+  std::size_t k = 0;
+  for (const Object* o : a.model().by_kind(kind)) {
+    if (o->id == id) return kPalette[k % kPalette.size()];
+    ++k;
+  }
+  return {170, 170, 170};
+}
 
 // 0~1 값을 색으로. 색상표(RES-14): rainbow(파랑 → 청록 → 초록 → 노랑 → 빨강), grayscale, blue_red, heat(검정 → 빨강 → 노랑 → 흰색)
 std::array<std::uint8_t, 3> colormap(double t, const std::string& name = "rainbow", int levels = 0) {
@@ -568,19 +584,19 @@ Built build_scene(App& a, bool surface_pick = false) {
       return p;
     };
     // 색 기준(MSH-24, PRP-13): 파트 / 프로퍼티 / 재료. 프로퍼티·재료는 요소 → 프로퍼티 대응을 만들어 쓴다
-    std::map<Id, std::size_t> part_color;
-    std::unordered_map<Id, std::size_t> elem_color;  // color_by 가 property·material 일 때 요소 → 색 번호
+    // 색은 object_color 한 곳에서: 메시 파트·재료·프로퍼티마다 다른 색(지정 색 우선) — 트리 아이콘과 같다
+    std::map<Id, std::array<std::uint8_t, 3>> part_color;
+    std::unordered_map<Id, std::array<std::uint8_t, 3>> elem_color;  // color_by 가 property·material 일 때 요소 → 색
     {
-      std::size_t k = 0;
-      for (const Object* mp : a.model().by_kind("mesh_part")) part_color[mp->id] = k++;
+      for (const Object* mp : a.model().by_kind("mesh_part")) part_color[mp->id] = object_color(a, vs.appearance, "mesh_part", mp->id);
       if (vs.color_by != "part") {
-        std::map<Id, std::size_t> index;  // 프로퍼티(또는 재료) → 색 번호
         for (const Object* pr : a.model().by_kind("property")) {
           if (pr->suppressed || !has(pr->props, "target")) continue;
-          const Id key = vs.color_by == "material" ? pr->props.value("material", Id(0)) : pr->id;
-          if (!index.count(key)) index[key] = index.size();
+          const Id mat = pr->props.contains("material") && pr->props["material"].is_number() ? pr->props["material"].get<Id>() : 0;
+          if (vs.color_by == "material" && !mat) continue;
+          const auto col = vs.color_by == "material" ? object_color(a, vs.appearance, "material", mat) : object_color(a, vs.appearance, "property", pr->id);
           try {
-            for (const Json& e : resolve_target(a, pr->props["target"], "elements")) elem_color[e.get<Id>()] = index[key];
+            for (const Json& e : resolve_target(a, pr->props["target"], "elements")) elem_color[e.get<Id>()] = col;
           } catch (const Error&) {
           }
         }
@@ -589,10 +605,10 @@ Built build_scene(App& a, bool surface_pick = false) {
     auto base_color = [&](std::size_t elem_index) -> std::array<std::uint8_t, 3> {
       if (vs.color_by != "part") {
         auto it = elem_color.find(m.element_ids()[elem_index]);
-        return it == elem_color.end() ? std::array<std::uint8_t, 3>{170, 170, 170} : kPalette[it->second % kPalette.size()];  // 할당 없음 = 회색
+        return it == elem_color.end() ? std::array<std::uint8_t, 3>{170, 170, 170} : it->second;  // 할당 없음 = 회색
       }
       const auto pc = part_color.find(m.part_at(elem_index));
-      return base_of(m.part_at(elem_index), pc == part_color.end() ? std::array<std::uint8_t, 3>{170, 170, 170} : kPalette[pc->second % kPalette.size()]);
+      return pc == part_color.end() ? std::array<std::uint8_t, 3>{170, 170, 170} : pc->second;
     };
     // 결과 표시 중 그 스텝에서 제거된 요소(RES-59)는 숨긴다(픽킹 대상에서도 빠진다)
     std::set<Id> removed_now;
@@ -2595,6 +2611,24 @@ void register_view_commands(App& app) {
     app.register_command(std::move(c));
   }
   {
+    CommandSpec c = base("view.object_colors", 'V', "메시 파트·재료·프로퍼티·형상 파트의 표시 색과 지금 색 기준(color_by)을 조회한다(트리 아이콘·범례용, 화면과 같은 색)", "MSH-24, PRP-13, WT-25");
+    c.fn = [](App& a, const Json&) {
+      const ViewState& vs = state(a);
+      Json out{{"color_by", vs.color_by}};
+      for (const char* kind : {"mesh_part", "material", "property", "part"}) {
+        Json arr = Json::array();
+        for (const Object* o : a.model().by_kind(kind)) {
+          const auto c3 = object_color(a, vs.appearance, kind, o->id);
+          const bool custom = vs.appearance.contains(std::to_string(o->id)) && vs.appearance[std::to_string(o->id)].contains("color");
+          arr.push_back(Json{{"id", o->id}, {"name", o->name}, {"color", {c3[0], c3[1], c3[2]}}, {"custom", custom}});
+        }
+        out[kind] = arr;
+      }
+      return out;
+    };
+    app.register_command(std::move(c));
+  }
+  {
     CommandSpec c = base("view.labels", 'V', "노드·요소 번호 라벨을 화면에 표시한다(3D 위치에 투영). 매개변수 없이 부르면 지운다. 최대 5000개", "RND-36");
     c.params = {F("nodes", "integer_list", "라벨을 붙일 노드").ex({1, 2}), F("elements", "integer_list", "라벨을 붙일 요소").ex({1}),
                 F("all_nodes", "bool", "모든 절점 번호 표시 토글(해당 종류만 변경)").ex(true),
@@ -3092,13 +3126,16 @@ void register_view_commands(App& app) {
     app.register_command(std::move(c));
   }
   {
-    CommandSpec c = base("view.set_appearance", 'V', "객체(형상 파트·메시 파트)의 색(0~255 RGB)과 불투명도(alpha 0~1)를 지정한다. 둘 다 비우면 그 객체의 지정을 지운다. 컨투어 색은 그대로다", "WT-25, RND-16");
-    c.params = {F("id", "ref", "객체(part 또는 mesh_part)").call_req(), F("color", "integer_list", "[R, G, B] (0~255)").ge(0).le(255).ex({200, 60, 60}),
+    CommandSpec c = base("view.set_appearance", 'V', "객체(형상 파트·메시 파트·재료·프로퍼티)의 색(0~255 RGB)과 불투명도(alpha 0~1, 파트만)를 지정한다. 둘 다 비우면 그 객체의 지정을 지운다. 재료·프로퍼티 색은 view.color_by material·property 에서 쓴다. 컨투어 색은 그대로다", "WT-25, RND-16, MSH-24, PRP-13");
+    c.params = {F("id", "ref", "객체(part·mesh_part·material·property)").call_req(), F("color", "integer_list", "[R, G, B] (0~255)").ge(0).le(255).ex({200, 60, 60}),
                 F("alpha", "number", "불투명도(0~1)").gt(0).le(1)};
     c.fn = [](App& a, const Json& p) {
       ViewState& vs = state(a);
       const Object& o = a.model().get(p["id"].get<Id>());
-      if (o.kind != "part" && o.kind != "mesh_part") throw Error("wrong_kind", "형상 파트 또는 메시 파트만 모양을 지정할 수 있습니다", {{"object", o.id}, {"kind", o.kind}});
+      if (o.kind != "part" && o.kind != "mesh_part" && o.kind != "material" && o.kind != "property")
+        throw Error("wrong_kind", "형상 파트·메시 파트·재료·프로퍼티만 모양을 지정할 수 있습니다", {{"object", o.id}, {"kind", o.kind}});
+      if ((o.kind == "material" || o.kind == "property") && has(p, "alpha"))
+        throw Error("invalid_param", "재료·프로퍼티에는 색만 지정합니다(불투명도는 형상·메시 파트에)", {{"param", "alpha"}});
       const std::string key = std::to_string(o.id);
       if (!has(p, "color") && !has(p, "alpha")) {
         vs.appearance.erase(key);

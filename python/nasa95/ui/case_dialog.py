@@ -22,7 +22,7 @@ DEFAULT_OUTPUTS = {"static": (["U", "RF"], ["S", "E"]), "frequency": (["U"], [])
                    "coupled_temperature_displacement": (["U", "NT"], ["S"]), "uncoupled_temperature_displacement": (["U", "NT"], ["S"]), "visco": (["U"], ["S", "PEEQ"])}
 
 LABELS = {"mesh_part": "메시", "load_set": "하중 셋", "bc_set": "구속 셋"}
-SYMBOLS = {"mesh_part": "mesh", "load_set": "load", "bc_set": "bc"}
+SYMBOLS = {"mesh_part": "mesh", "load_set": "load_set", "bc_set": "bc_set"}
 
 
 class CaseDialog(QDialog):
@@ -245,7 +245,7 @@ class CaseDialog(QDialog):
             q = child["props"]
             detail = QTreeWidgetItem(item, [child["name"] + (" · 억제됨" if child.get("suppressed") else ""), q.get("type", "")])
             detail.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            detail.setIcon(0, icon(SYMBOLS[kind], self.palette().color(QPalette.ColorRole.Text).name()))
+            detail.setIcon(0, icon(kind.removesuffix("_set"), self.palette().color(QPalette.ColorRole.Text).name()))
             detail.setToolTip(0, json.dumps(q.get("target", {}), ensure_ascii=False))
         return item
 

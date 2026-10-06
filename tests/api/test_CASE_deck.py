@@ -583,7 +583,7 @@ def test_MSH_T07_round_trip(app, tmp_path):
     r = other.execute("mesh.import", path=path)
     assert (r["nodes"], r["elements"]) == (app.execute("project.info")["nodes"], app.execute("project.info")["elements"])
     assert r["ignored"] == {} and r["unsupported_types"] == {} and r["skipped_faces"] == 0
-    assert (r["node_offset"], r["element_offset"]) == (0, 0) and len(r["parts"]) == 2 and len(r["sets"]) == 4
+    assert (r["node_offset"], r["element_offset"]) == (0, 0) and len(r["parts"]) == 3 and len(r["sets"]) == 4  # SOLID·SKIN + 파트 없이 만든 판의 기본 파트 MESH(D19)
     assert mesh_state(other) == mesh_state(app)  # 좌표까지 완전히 같다
     # 다시 내보내면 같은 파일
     path2 = str(tmp_path / "rt2.inp")
@@ -670,11 +670,11 @@ def test_MSH_T07_import_foreign_file(app, tmp_path):
     assert r["skipped_faces"] == 1  # SPOS
     assert app.execute("mesh.nodes", ids=[3, 6, 9])["coords"] == [[1.0, 1.0, 0.0], [1.0, 0.0, 1.0], [2.0, 0.0, 0.0]]
     parts = {p["id"]: p["name"] for p in app.execute("mesh_part.list")}
-    assert sorted(parts.values()) == ["Eshell", "Evol"]  # 요소가 없는 Eodd 는 만들지 않는다
+    assert sorted(parts.values()) == ["Eshell", "Evol", "MESH"]  # 요소가 없는 Eodd 는 만들지 않는다. 셋에 없는 요소는 기본 파트 MESH 에(D19)
     elems = {e["id"]: e for e in app.execute("mesh.elements")}
     assert (elems[1]["shape"], parts[elems[1]["part"]]) == ("hex8", "Evol")
     assert (elems[3]["shape"], elems[3]["type"], elems[3]["nodes"]) == ("tri3", "S3", [2, 9, 3])
-    assert (elems[4]["type"], elems[4]["part"]) == ("T3D2", 0)
+    assert (elems[4]["type"], parts[elems[4]["part"]]) == ("T3D2", "MESH")
     sets = {s["name"]: app.execute("set.members", id=s["id"])["members"] for s in app.execute("set.list")}
     assert sets == {"bottom": [1, 2, 3, 4], "odd": [1, 3, 5, 7, 9], "both": [1, 2, 3, 4, 5, 7, 9], "solids": [1], "some": [1, 3],
                     "top": [[1, 2], [3, 1]], "nodesurf": [1, 2, 3, 4, 9]}  # 쉘의 S3 = 첫 변

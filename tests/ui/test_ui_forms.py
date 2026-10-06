@@ -162,3 +162,53 @@ def test_UI_settings_dialog(qt, tmp_path, monkeypatch):
     e.editors["threads"].setText("")
     e._apply()
     assert "threads" not in app.execute("app.settings_get")["values"]
+
+
+@pytest.mark.feature("CMN-03")
+@pytest.mark.feature("WT-11")
+def test_UI_function_dialog_plot_and_import(qt, tmp_path):
+    """함수 창(사용자 요청 2026-10-06): 진폭 함수를 열면 그래프·통계가 보이고, 표 편집·파일 가져오기(2열·AT2, 배율)·수식 표본화가 명령으로 간다."""
+    from nasa95.ui.function_dialog import FunctionDialog, FunctionPlot, read_two_columns
+    app = App()
+    fn = app.execute("function.create_amplitude", name="ACC", points=[[0.0, 0.0], [0.5, 1.5], [1.0, -2.0]])["id"]
+    d = FunctionDialog(app, obj=app.execute("function.get", id=fn))
+    assert d.table.rowCount() == 3 and len(d.plot.points) == 3 and "최대 절댓값 2" in d.stats.text()
+    d.plot.resize(400, 300)
+    d.plot.hover = 2
+    d.plot.grab()  # paintEvent 가 예외 없이 돈다
+    # 표 편집 → 그래프 갱신 → 적용(function.update)
+    d.table.add_row()
+    d.table.item(3, 0).setText("1.5"), d.table.item(3, 1).setText("0.5")
+    assert len(d.plot.points) == 4
+    d._apply()
+    assert app.execute("function.get", id=fn)["props"]["points"] == [[0.0, 0.0], [0.5, 1.5], [1.0, -2.0], [1.5, 0.5]]
+    # 파일 가져오기: 2열 텍스트(배율 9810), PEER AT2
+    rec = tmp_path / "rec.dat"
+    rec.write_text("# t  a(g)\n0.00 0.10\n0.02 -0.20\n0.04 0.05\n", encoding="utf-8")
+    assert read_two_columns(str(rec)) == [[0.0, 0.1], [0.02, -0.2], [0.04, 0.05]]
+    at2 = tmp_path / "RSN1.AT2"
+    at2.write_text("PEER NGA STRONG MOTION DATABASE RECORD\nIMPERIAL VALLEY 1940\nACCELERATION TIME SERIES IN UNITS OF G\nNPTS=   4, DT=   .0100 SEC\n"
+                   "   .1000000E-01   -.2000000E-01    .3000000E-01   -.4000000E-01\n", encoding="utf-8")
+    pts = read_two_columns(str(at2))
+    assert len(pts) == 4 and pts[1] == [0.01, -0.02] and abs(pts[3][0] - 0.03) < 1e-12
+    n = FunctionDialog(app, sub="amplitude")
+    n.scale.setText("9810")
+    n.table.set_points([[a, b * 9810.0] for a, b in read_two_columns(str(rec))])
+    n._refresh()
+    assert abs(n.plot.points[1][1] + 1962.0) < 1e-9 and "점 3개" in n.stats.text()
+    n.name.setText("REC")
+    n._apply()
+    assert app.execute("function.get", id=n.result_id)["props"]["points"][1] == [0.02, -1962.0]
+    # 수식: t 하나만 쓰는 수식은 표본화해 그린다, 공간 수식(x, y)은 그리지 않는다
+    e = FunctionDialog(app, sub="expression")
+    e.expression.setText("100*sin(2*pi*t)")
+    assert len(e.plot.points) == 401 and e.plot.xlabel == "t" and abs(max(p[1] for p in e.plot.points) - 100.0) < 0.5
+    e.expression.setText("x*y")
+    assert e.plot.points == []
+    e.expression.setText("2*x")
+    e._apply()
+    assert app.execute("function.get", id=e.result_id)["props"]["expression"] == "2*x"
+    plot = FunctionPlot()
+    plot.set_points([], "t", "a")
+    plot.resize(200, 120)
+    plot.grab()

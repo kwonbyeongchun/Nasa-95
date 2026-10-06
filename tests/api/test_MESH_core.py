@@ -162,6 +162,8 @@ def test_ALL_05_mesh_events(app):
         {"nodes_added": 12, "nodes_removed": 0, "nodes_moved": 0, "elements_added": 0, "elements_removed": 0, "elements_modified": 0},
         {"nodes_added": 0, "nodes_removed": 0, "nodes_moved": 0, "elements_added": 2, "elements_removed": 0, "elements_modified": 0},
     ]
+    # 파트 없이 만든 요소 → 같은 명령 안에서 기본 파트 MESH 가 생긴다(D19): 요소 수정 이벤트 없이, 객체 생성 하나
+    assert len(log[-1]["created"]) == 1 and [m["name"] for m in app.execute("mesh_part.list")] == ["MESH"]
     app.undo()
     assert log[-1]["source"] == "undo" and log[-1]["mesh"]["elements_removed"] == 2
     log.clear()
@@ -485,3 +487,34 @@ def test_MSH_create_crack(app):
     with pytest.raises(Nasa95Error) as e:
         app.execute("mesh.create_crack", faces={"type": "faces", "ids": fr["faces"][:1]})  # 겉면은 가를 것이 없다
     assert e.value.code == "invalid_state"
+
+
+@pytest.mark.feature("MSH-01")
+@pytest.mark.feature("WT-01")
+def test_MSH_T09_09_elements_always_belong_to_a_mesh_part(app):
+    """요소는 메시 파트 없이 있을 수 없다(D19): 파트 없이 만든 요소는 기본 파트 MESH 에 들어가고, mesh.set_part 로 옮기며, 파트를 지우면 요소도 지워진다. Undo 로 되돌아간다."""
+    n = app.execute("mesh.nodes_create", coords=[[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]])["ids"]
+    e = app.execute("mesh.elements_create", shape="line2", connectivity=[[n[0], n[1]], [n[1], n[2]], [n[2], n[3]]])["ids"]
+    parts = app.execute("mesh_part.list")
+    assert len(parts) == 1 and parts[0]["name"] == "MESH" and all(el["part"] == parts[0]["id"] for el in app.execute("mesh.elements", ids=e))
+    assert app.execute("project.tree", kind="mesh_part")[0]["count"] == 1
+    # 같은 트랜잭션: Undo 한 번에 요소와 기본 파트가 같이 사라진다
+    app.execute("app.undo")
+    assert app.execute("mesh_part.list") == [] and app.execute("mesh.statistics")["elements"] == 0
+    app.execute("app.redo")
+    default = app.execute("mesh_part.list")[0]["id"]
+    # 다음에 만든 요소도 같은 기본 파트로; 옮기기
+    e2 = app.execute("mesh.elements_create", shape="point1", connectivity=[[n[3]]])["ids"]
+    assert app.execute("mesh.elements", ids=e2)[0]["part"] == default
+    other = app.execute("mesh_part.create", name="OTHER")["id"]
+    assert app.execute("mesh.set_part", ids=[e[2]] + e2, part=other) == {"count": 2, "part": other}
+    assert app.execute("mesh.statistics", part=other)["elements"] == 2 and app.execute("mesh.statistics", part=default)["elements"] == 2
+    with pytest.raises(Nasa95Error):
+        app.execute("mesh.set_part", ids=[e[0]], part=9999)
+    with pytest.raises(Nasa95Error):
+        app.execute("mesh.set_part", ids=[e[0]])  # part 는 필수
+    # 파트 삭제 → 그 요소(와 그 요소만 쓰던 노드)도 삭제
+    r = app.execute("mesh_part.delete", id=other)
+    assert r["elements"] == 2 and app.execute("mesh.statistics")["elements"] == 2 and app.execute("mesh.statistics")["nodes"] == 3
+    app.execute("app.undo")
+    assert app.execute("mesh.statistics")["elements"] == 4 and app.execute("mesh.statistics", part=other)["elements"] == 2

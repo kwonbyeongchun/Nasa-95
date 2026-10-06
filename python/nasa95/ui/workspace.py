@@ -194,9 +194,9 @@ class Workspace:
             ("홈", "프로젝트", [("열기", "open", "열기"), ("저장", "save", "저장")]),
             ("홈", "편집", [("실행 취소", "undo", "실행 취소"), ("다시 실행", "redo", "다시 실행"), ("선택 객체 편집", "edit", "속성 편집")]),
             ("홈", "화면", [("전체 맞춤", "fit", "전체 맞춤"), ("등각 뷰", "box", "등각")]),
-            ("형상", "기본 형상", [("상자", "box", "상자"), ("실린더", "box", "실린더"), ("형상 가져오기(STEP·IGES·BREP)", "open", "가져오기")]),
+            ("형상", "기본 형상", [("상자", "box", "상자"), ("실린더", "cylinder", "실린더"), ("형상 가져오기(STEP·IGES·BREP)", "open", "가져오기")]),
             ("메시", "자동 메싱", [("선택한 파트 자동 메싱", "mesh", "자동 메싱"), ("메시 상태", "check", "메시 상태")]),
-            ("해석", "실행", [("선택한 케이스 실행", "run", "해석 실행"), ("실행 상태", "property", "실행 상태"), ("덱 미리 보기", "property", "입력 파일")]),
+            ("해석", "실행", [("선택한 케이스 실행", "run", "해석 실행"), ("실행 상태", "status", "실행 상태"), ("덱 미리 보기", "code", "입력 파일")]),
             ("결과", "결과 표시", [("선택한 케이스의 결과 열기", "open", "결과 열기"), ("컨투어 표시", "result", "컨투어"), ("결과 표시 끄기", "eye_off", "표시 끄기")]),
             ("보기", "카메라", [("전체 맞춤", "fit", "전체 맞춤"), ("등각 뷰", "box", "등각"), ("정면 뷰", "box", "정면"), ("평면 뷰", "box", "평면")]),
         ]
@@ -265,6 +265,26 @@ class Workspace:
             button = self.ribbon.action(self.ribbon.group(tab, "메시 표시"), self._axes_action, "beam_axis", "보 1축")
             button.setToolTip("보 요소의 단면 1축(형강은 웨브) 방향을 주황 선으로 표시 · 프로퍼티·요소별 방향, 없으면 솔버 기본 −Z")
         self.viewport.presented.connect(self._sync_beam_axes)
+        # 요소 색 기준(MSH-24, PRP-13): 메시별 / 재료별 / 프로퍼티별. 색은 트리 아이콘과 같다(오른쪽 클릭 → 색 바꾸기)
+        self._color_by_action = QAction("요소 색 기준", self)
+        color_menu = QMenu(self)
+        color_group = QActionGroup(self)
+        color_group.setExclusive(True)
+        self._color_by_items = {}
+        for key, label in (("part", "메시별 색 (Color by Mesh)"), ("material", "재료별 색 (Color by Material)"), ("property", "프로퍼티별 색 (Color by Property)")):
+            act = color_menu.addAction(label)
+            act.setCheckable(True)
+            color_group.addAction(act)
+            act.triggered.connect(lambda _c=False, k=key: self._guard(lambda: self._set_color_by(k)))
+            self._color_by_items[key] = act
+        self._color_by_action.setMenu(color_menu)
+        self._color_by_action.triggered.connect(lambda: self._guard(self._cycle_color_by))
+        menus["보기"].addMenu(color_menu).setText("요소 색 기준")
+        for tab in ("메시", "보기"):
+            button = self.ribbon.action(self.ribbon.group(tab, "메시 표시"), self._color_by_action, "palette", "색 기준")
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+            button.setToolTip("요소 색 기준: 메시별 / 재료별 / 프로퍼티별 · 할당 없는 요소는 회색 · 색은 트리에서 오른쪽 클릭 → 색 바꾸기")
+        self.viewport.presented.connect(self._sync_color_by)
         for name, kinds in (("선택한 파트 자동 메싱", ("part",)), ("선택한 케이스 실행", ("case",)),
                             ("선택한 케이스의 결과 열기", ("case",)), ("덱 미리 보기", ("case",))):
             if name in actions:
@@ -280,10 +300,10 @@ class Workspace:
             if caption == "해석 케이스":
                 new_case = self._new_action("새 해석 케이스(해석 종류·메시·하중 셋·구속 셋 선택)", self._new_case)
                 new_case.setIconText("해석 케이스")
-                self.ribbon.action(row, new_case, "run", "해석 케이스")
+                self.ribbon.action(row, new_case, "case", "해석 케이스")
                 edit_sets = self._new_action("선택한 스텝의 셋·메시 범위 편집", self._edit_step_sets, ("step", "case"))
                 edit_sets.setIconText("셋 편집")
-                self.ribbon.action(row, edit_sets, "property", "셋 편집")
+                self.ribbon.action(row, edit_sets, "edit", "셋 편집")
             for kind in kinds:
                 if kind not in self.app.kinds():
                     continue
@@ -504,14 +524,23 @@ class Workspace:
             hidden = set(diagnostics["hidden"] if "hidden" in diagnostics else self.app.execute("view.show", ids=[])["hidden"])
         except Nasa95Error:
             hidden = set()
+        try:  # 메시 파트·재료·프로퍼티의 표시 색(화면의 색 기준과 같은 색) → 트리 아이콘을 그 색으로 칠한다
+            oc = self.app.execute("view.object_colors")
+            swatch = {(k, o["id"]): "#%02X%02X%02X" % tuple(o["color"]) for k in ("mesh_part", "material", "property") for o in oc.get(k, [])}
+        except Nasa95Error:
+            swatch = {}
         for item in self._items():
             data = item.data(0, Qt.ItemDataRole.UserRole)
             kind = data[0] if data else item.text(1)
             muted = bool(item.data(0, Qt.ItemDataRole.UserRole + 1))
             tone = {"part": "blue", "feature": "blue", "mesh_part": "purple", "material": "orange",
-                    "case": "green", "step": "green", "result_file": "purple", "load": "orange",
-                    "bc": "blue", "sketch": "orange"}.get(kind, "muted")
-            item.setIcon(0, icon(kind, colors["disabled"] if muted else colors[tone]))
+                    "case": "green", "step": "green", "result_file": "purple", "load": "orange", "load_set": "orange",
+                    "bc": "blue", "bc_set": "blue", "sketch": "orange"}.get(kind, "muted")
+            fill = swatch.get(tuple(data)) if data and not muted else None
+            if fill:
+                item.setIcon(0, icon(kind, colors["text"], fill))
+            else:
+                item.setIcon(0, icon(kind, colors["disabled"] if muted else colors[tone]))
             item.setForeground(0, QColor(colors["disabled"] if muted else colors["text"]))
             font = item.font(0)
             font.setBold(False)
@@ -617,6 +646,28 @@ class Workspace:
 
     def _sync_mesh_solid(self):
         self._solid_action.setChecked(self.app.execute("view.mesh_options_get")["solid_1d_2d"])
+
+    def _set_color_by(self, key):
+        try:
+            self._view("view.color_by", by=key)
+        finally:
+            self._sync_color_by()
+            self._decorate_tree()
+
+    def _cycle_color_by(self):
+        order = ["part", "material", "property"]
+        cur = self.app.execute("view.object_colors").get("color_by", "part")
+        self._set_color_by(order[(order.index(cur) + 1) % 3] if cur in order else "part")
+
+    def _sync_color_by(self):
+        try:
+            cur = self.app.execute("view.object_colors").get("color_by", "part")
+        except Nasa95Error:
+            return
+        for key, act in getattr(self, "_color_by_items", {}).items():
+            act.setChecked(key == cur)
+        label = {"part": "메시별", "material": "재료별", "property": "프로퍼티별"}.get(cur, cur)
+        self._color_by_action.setText(f"요소 색: {label}")
 
     def _set_beam_axes(self, on):
         try:
@@ -756,6 +807,8 @@ class Workspace:
                     self.set_workspace("model", keep_symbols=True)
         if name.startswith("server.") and getattr(self, "rest_button", None):
             self.rest_button.refresh()
+        if name in ("project.save", "project.save_as") and hasattr(self, "_update_title"):  # 저장은 모델 통지가 없다 → 제목의 * 와 파일 이름
+            self._update_title()
         if name == "view.result_show":
             try:
                 st = self.app.execute("view.result_state")
