@@ -6,7 +6,8 @@
 param(
     [string]$Version = "",
     [switch]$NoInstaller,
-    [string]$PythonEmbedVersion = "3.12.10"
+    [string]$PythonEmbedVersion = "3.12.10",
+    [string]$VulkanVersion = "1.4.363.0"
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
@@ -88,6 +89,23 @@ while ($queue.Count -gt 0) {
         }
     }
 }
+# Vulkan 로더(vulkan-1.dll, Apache-2.0): 보통 그래픽 드라이버가 System32 에 설치하며 그쪽이 먼저 잡힌다. 없는 PC(또는 GPU 없는 빌드 러너)를 위해 LunarG 런타임의 것을 함께 넣는다
+$vkrtRoot = Join-Path $thirdParty "vulkan\runtime-$VulkanVersion"
+$vkrtDll = Get-ChildItem $vkrtRoot -Recurse -Filter "vulkan-1.dll" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+if (-not $vkrtDll) {
+    New-Item -ItemType Directory -Force $vkrtRoot | Out-Null
+    $vkrtZip = Join-Path $vkrtRoot "vulkan-runtime-components.zip"
+    $url = "https://sdk.lunarg.com/sdk/download/$VulkanVersion/windows/vulkan-runtime-components.zip"
+    Write-Host "내려받기 $url"
+    Invoke-WebRequest -Uri $url -OutFile $vkrtZip
+    Expand-Archive -Path $vkrtZip -DestinationPath $vkrtRoot -Force
+    Remove-Item $vkrtZip -Force
+    $vkrtDll = Get-ChildItem $vkrtRoot -Recurse -Filter "vulkan-1.dll" | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1
+    if (-not $vkrtDll) { throw "Vulkan 런타임에서 x64\vulkan-1.dll 을 찾지 못했습니다: $vkrtRoot" }
+}
+Copy-Item $vkrtDll.FullName $bin -Force
+$seen["vulkan-1.dll"] = $vkrtDll.FullName
+$vkrtLic = Get-ChildItem $vkrtRoot -Recurse -Filter "VulkanRT-License.txt" | Select-Object -First 1
 $copied = ($seen.Values | Where-Object { $_ }).Count
 Write-Host "DLL $copied 개 → bin\ (시스템 DLL $(($seen.Values | Where-Object { -not $_ }).Count) 개 제외)"
 "../../../../bin" | Set-Content -Path (Join-Path $dest "_dll_dirs.txt") -Encoding ascii
@@ -118,6 +136,7 @@ if (Test-Path (Join-Path $ribbon "LICENSE")) { Copy-Item (Join-Path $ribbon "LIC
 $psLic = Get-ChildItem $site -Filter "LICENSE*" -Recurse -Depth 2 | Where-Object { $_.FullName -match "PySide6" } | Select-Object -First 1
 if ($psLic) { Copy-Item $psLic.FullName (Join-Path $lic "PySide6-LICENSE(LGPL-3.0).txt") }
 Copy-Item (Join-Path $py "LICENSE.txt") (Join-Path $lic "Python-LICENSE.txt") -ErrorAction SilentlyContinue
+if ($vkrtLic) { Copy-Item $vkrtLic.FullName (Join-Path $lic "VulkanRT-License(Apache-2.0).txt") }
 @"
 NASA-95 $Version — CAE Pre/Post 프로세서 (https://github.com/kwonbyeongchun/Nasa-95)
 
@@ -126,7 +145,7 @@ NASA-95 $Version — CAE Pre/Post 프로세서 (https://github.com/kwonbyeongchu
 솔버: CalculiX(ccx), OpenSees, MyStran 은 이 배포본에 들어 있지 않다(각각 별도 프로그램, 라이선스가 다르다).
   설치한 뒤 설정(리본 → 설정·연동 → 설정)에서 실행 파일 경로를 지정하거나 환경 변수 NASA95_CCX / NASA95_OPENSEES / NASA95_MYSTRAN 을 둔다.
 3D 화면은 Vulkan 을 쓴다(그래픽 드라이버의 vulkan-1.dll). 구성: 임베디드 Python $PythonEmbedVersion, PySide6 6.11.1(LGPL), SARibbon 2.9.5(MIT),
-OpenCASCADE 8.0.1(LGPL 2.1 + 예외, 동적 링크), Netgen(LGPL 2.1, 동적 링크). 라이선스 문서는 licenses\ 에 있다.
+OpenCASCADE 8.0.1(LGPL 2.1 + 예외, 동적 링크), Netgen(LGPL 2.1, 동적 링크), Vulkan 로더 vulkan-1.dll(Apache-2.0, 그래픽 드라이버의 것이 있으면 그쪽을 쓴다). 라이선스 문서는 licenses\ 에 있다.
 "@ | Set-Content -Path (Join-Path $app "README.txt") -Encoding utf8
 
 # 6) 자가 검사: 배포본의 Python 으로 코어를 불러 명령 하나를 실행한다
