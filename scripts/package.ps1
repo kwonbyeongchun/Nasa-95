@@ -130,8 +130,8 @@ OpenCASCADE 8.0.1(LGPL 2.1 + 예외, 동적 링크), Netgen(LGPL 2.1, 동적 링
 "@ | Set-Content -Path (Join-Path $app "README.txt") -Encoding utf8
 
 # 6) 자가 검사: 배포본의 Python 으로 코어를 불러 명령 하나를 실행한다
-$check = & (Join-Path $py "python.exe") -c "import nasa95, PySideSARibbon; a = nasa95.App(); v = a.execute('app.version'); print(v)"
-if ($LASTEXITCODE -ne 0) { throw "배포본 자가 검사 실패(DLL 누락?)" }
+$check = & (Join-Path $py "python.exe") -c "import nasa95, PySideSARibbon; a = nasa95.App(); v = a.execute('app.version'); assert v.get('geometry'), 'OpenCASCADE 없이 빌드됨'; assert v.get('mesher') == 'netgen', 'Netgen 없이 빌드됨'; assert any(c['name'] == 'view.quality' for c in a.commands()), 'Vulkan 렌더러 없이 빌드됨(view.* 명령 없음)'; print(v)"
+if ($LASTEXITCODE -ne 0) { throw "배포본 자가 검사 실패(DLL 누락 또는 형상·메셔·렌더러 없이 빌드됨)" }
 Write-Host "자가 검사: $check"
 
 # 7) zip + 설치 파일

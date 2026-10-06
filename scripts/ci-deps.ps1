@@ -7,6 +7,7 @@ param(
     [string]$ThirdParty = "",
     [string]$OcctVersion = "8.0.1",
     [string]$NetgenTag = "v6.2.2608",
+    [string]$VulkanVersion = "1.4.363.0",
     [switch]$SkipNetgen
 )
 $ErrorActionPreference = "Stop"
@@ -62,14 +63,39 @@ if (-not $SkipNetgen -and -not (Test-Path (Join-Path $ngInstall "cmake\NetgenCon
 }
 if (Test-Path (Join-Path $ngInstall "cmake\NetgenConfig.cmake")) { Write-Host "Netgen: $ngInstall" } else { Write-Host "Netgen 없음(자동 메싱 없이 빌드된다)" }
 
-# ---- Vulkan SDK
+# ---- Vulkan SDK: LunarG 설치 프로그램을 받아 파일만 푼다(copy_only=1, 시스템 변경 없음). 쓰는 것: 헤더, vulkan-1.lib, glslc(빌드 때만)
 $vkDir = Join-Path $ThirdParty "vulkan\sdk"
-if (-not (Test-Path (Join-Path $vkDir "Include\vulkan\vulkan.h"))) {
-    if ($env:VULKAN_SDK -and (Test-Path (Join-Path $env:VULKAN_SDK "Include\vulkan\vulkan.h"))) {
+function Test-VulkanSdk([string]$d) {
+    return (Test-Path (Join-Path $d "Include\vulkan\vulkan.h")) -and (Test-Path (Join-Path $d "Lib\vulkan-1.lib")) -and (Test-Path (Join-Path $d "Bin\glslc.exe"))
+}
+if (-not (Test-VulkanSdk $vkDir)) {
+    if ($env:VULKAN_SDK -and (Test-VulkanSdk $env:VULKAN_SDK)) {
         New-Item -ItemType Directory -Force (Split-Path $vkDir) | Out-Null
         New-Item -ItemType Junction -Path $vkDir -Target $env:VULKAN_SDK | Out-Null
         Write-Host "Vulkan SDK: $vkDir → $env:VULKAN_SDK"
     } else {
-        Write-Warning "Vulkan SDK 가 없습니다(VULKAN_SDK 환경 변수). 렌더러 없이 빌드됩니다."
+        $vkRoot = Split-Path $vkDir
+        New-Item -ItemType Directory -Force $vkRoot | Out-Null
+        $exe = Join-Path $vkRoot "vulkan-sdk.exe"
+        $url = if ($VulkanVersion -eq "latest") { "https://sdk.lunarg.com/sdk/download/latest/windows/vulkan_sdk.exe" } else { "https://sdk.lunarg.com/sdk/download/$VulkanVersion/windows/vulkan_sdk.exe" }
+        Write-Host "Vulkan SDK 내려받기: $url"
+        Invoke-WebRequest -Uri $url -OutFile $exe
+        if (Test-Path $vkDir) { Remove-Item $vkDir -Recurse -Force }
+        $proc = Start-Process -FilePath $exe -ArgumentList "--root", $vkDir, "--accept-licenses", "--default-answer", "--confirm-command", "install", "copy_only=1" -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -ne 0 -or -not (Test-VulkanSdk $vkDir)) { throw "Vulkan SDK 설치(파일 풀기)에 실패했습니다: exit $($proc.ExitCode), $vkDir" }
+        Remove-Item $exe -Force
+        # 빌드에 쓰는 것만 남긴다(헤더, 로더 import 라이브러리, glslc — 단독 실행 가능): 1.7 GB → 약 40 MB(캐시 크기)
+        $keep = Join-Path $vkRoot "sdk_keep"
+        if (Test-Path $keep) { Remove-Item $keep -Recurse -Force }
+        New-Item -ItemType Directory -Force "$keep\Lib", "$keep\Bin", "$keep\Licenses" | Out-Null
+        Copy-Item (Join-Path $vkDir "Include") (Join-Path $keep "Include") -Recurse
+        Copy-Item (Join-Path $vkDir "Lib\vulkan-1.lib") (Join-Path $keep "Lib")
+        Copy-Item (Join-Path $vkDir "Bin\glslc.exe") (Join-Path $keep "Bin")
+        Copy-Item (Join-Path $vkDir "Licenses\*") (Join-Path $keep "Licenses") -Recurse -ErrorAction SilentlyContinue
+        Copy-Item (Join-Path $vkDir "InstallationLog.txt") $keep -ErrorAction SilentlyContinue
+        Remove-Item $vkDir -Recurse -Force
+        Move-Item $keep $vkDir
+        if (-not (Test-VulkanSdk $vkDir)) { throw "Vulkan SDK 정리 뒤 파일이 빠졌습니다: $vkDir" }
+        Write-Host "Vulkan SDK: $vkDir ($(Get-Content (Join-Path $vkDir 'InstallationLog.txt') -ErrorAction SilentlyContinue | Select-String 'Arguments' | Select-Object -First 1))"
     }
 } else { Write-Host "Vulkan SDK: $vkDir" }

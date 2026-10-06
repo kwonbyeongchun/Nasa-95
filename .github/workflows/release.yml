@@ -1,7 +1,7 @@
 # NASA-95 빌드 → 배포본(설치 파일 + zip) → GitHub Release 에 올린다.
 #   - 태그 v* 를 푸시하면 빌드해서 그 태그의 Release 에 NASA-95-<버전>-setup.exe 와 NASA-95-<버전>-win64.zip 을 첨부한다.
 #   - 수동 실행(workflow_dispatch)은 빌드만 하고 아티팩트로 남긴다(publish 를 켜면 입력한 버전으로 Release 도 만든다).
-# 외부 의존성은 scripts\ci-deps.ps1(OpenCASCADE 공식 빌드, Netgen 소스 빌드)·setup_ribbon.ps1(SARibbon 바인딩)이 준비하고 캐시한다.
+# 외부 의존성은 scripts\ci-deps.ps1(OpenCASCADE 공식 빌드, Netgen 소스 빌드, LunarG Vulkan SDK 파일 풀기)·setup_ribbon.ps1(SARibbon 바인딩)이 준비하고 캐시한다.
 # 솔버(CalculiX·OpenSees·MyStran)는 넣지 않는다(별도 실행 파일).
 name: release
 
@@ -24,7 +24,7 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  VULKAN_SDK_VERSION: "latest"
+  VULKAN_SDK_VERSION: "1.4.363.0"
 
 jobs:
   build:
@@ -54,13 +54,7 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           "NASA-95 $v"
 
-      - name: Vulkan SDK
-        uses: humbletim/install-vulkan-sdk@v1.2
-        with:
-          version: ${{ env.VULKAN_SDK_VERSION }}
-          cache: true
-
-      - name: 의존성 캐시 (OpenCASCADE·Netgen)
+      - name: 의존성 캐시 (OpenCASCADE·Netgen·Vulkan SDK)
         id: deps-cache
         uses: actions/cache@v4
         with:
@@ -68,10 +62,11 @@ jobs:
             third_party/occt
             third_party/netgen/install
             third_party/netgen/src/LICENSE
-          key: deps-occt8.0.1-netgen6.2.2608-vs2022-v1
+            third_party/vulkan/sdk
+          key: deps-occt8.0.1-netgen6.2.2608-vulkan${{ env.VULKAN_SDK_VERSION }}-vs2022-v2
 
-      - name: 의존성 준비 (OpenCASCADE 내려받기, Netgen 빌드)
-        run: .\scripts\ci-deps.ps1
+      - name: 의존성 준비 (OpenCASCADE 내려받기, Netgen 빌드, Vulkan SDK 풀기)
+        run: .\scripts\ci-deps.ps1 -VulkanVersion ${{ env.VULKAN_SDK_VERSION }}
 
       - name: .venv
         run: |
