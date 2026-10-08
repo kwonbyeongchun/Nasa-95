@@ -222,12 +222,21 @@ struct BcMark {
 
 struct Built {
   RenderScene scene;
+  std::vector<std::size_t> edge_lines;  // 배경 대비 색을 적용할 경계선의 첫 정점. 하중·스케치 색은 유지한다.
   Bounds bounds;
   std::vector<BcMark> bc_marks;
   std::vector<PickRecord> picks;
   std::unordered_map<Id, V3> node_pos;  // 그린 노드 위치(변형 표시면 옮긴 자리) — 표식·영역 선택에 쓴다
   Json legend = nullptr;
 };
+
+void apply_edge_contrast(RenderScene& scene, const Built& built) {
+  const bool dark = 0.2126f * scene.background[0] + 0.7152f * scene.background[1] + 0.0722f * scene.background[2] < 0.45f;
+  const std::uint8_t ink = dark ? 210 : 30;
+  for (std::size_t first : built.edge_lines)
+    for (std::size_t i = first; i < first + 2; ++i)
+      for (int c = 0; c < 3; ++c) scene.lines[i].color[c] = ink;
+}
 
 struct KeyHash {
   std::size_t operator()(const std::array<Id, 4>& k) const {
@@ -431,7 +440,10 @@ Built build_scene(App& a, bool surface_pick = false) {
     b.scene.lines.push_back(vertex(p, {0, 0, 0}, color, 0));
     b.scene.lines.push_back(vertex(q, {0, 0, 0}, color, 0));
   };
-  auto line = [&](const V3& p, const V3& q) { colored_line(p, q, edge_color); };
+  auto line = [&](const V3& p, const V3& q) {
+    b.edge_lines.push_back(b.scene.lines.size());
+    colored_line(p, q, edge_color);
+  };
   // 투명(RND-17): 지정한 쪽(형상·메시)의 면은 알파를 붙여 투명 목록에 넣는다
   const std::string transparent_what = vs.transparency.is_null() ? "" : vs.transparency.value("what", std::string("all"));
   const std::uint8_t alpha = vs.transparency.is_null() ? 255 : static_cast<std::uint8_t>(std::lround(255.0 * vs.transparency.value("alpha", 0.3)));
@@ -667,7 +679,8 @@ Built build_scene(App& a, bool surface_pick = false) {
       return colormap(vmax > vmin ? (v - vmin) / (vmax - vmin) : 0.5, cmap_name, cmap_levels);
     };
     // 메시 표시 옵션(RND-20~22): 요소 경계선 끔, 요소 축소(면을 요소 중심 쪽으로 줄여 요소 하나하나가 보이게)
-    const bool mesh_edges = vs.mesh_options.value("edges", true);
+    // 경계선 숨김은 음영 위의 선에만 적용한다. 와이어프레임에서는 선이 곧 메시다.
+    const bool mesh_edges = vs.mode == "wireframe" || vs.mesh_options.value("edges", true);
     const double shrink = std::clamp(vs.mesh_options.value("shrink", 0.0), 0.0, 0.9);
     std::vector<V3> shrink_centers;
     if (shrink > 0.0) {
@@ -1258,6 +1271,7 @@ Built build_scene(App& a, bool surface_pick = false) {
     const V3 pt = v3(vs.expand["point"]), ax = unit(v3(vs.expand["axis"]));
     const double step = vs.expand.value("angle", 360.0 / sectors) * 3.14159265358979323846 / 180.0;
     const std::size_t tri1 = b.scene.triangles.size(), line1 = b.scene.lines.size(), tr1 = b.scene.transparent.size();
+    const std::size_t edge_count = b.edge_lines.size();
     for (int k = 1; k < sectors; ++k) {
       const double ang = step * k;
       auto copy = [&](std::vector<RenderVertex>& list, std::size_t from, std::size_t to) {
@@ -1269,7 +1283,10 @@ Built build_scene(App& a, bool surface_pick = false) {
           b.bounds.add(p);
         }
       };
+      const std::size_t line_offset = b.scene.lines.size() - mesh_line0;
       copy(b.scene.triangles, mesh_tri0, tri1), copy(b.scene.lines, mesh_line0, line1), copy(b.scene.transparent, mesh_tr0, tr1);
+      for (std::size_t i = 0; i < edge_count; ++i)
+        if (b.edge_lines[i] >= mesh_line0 && b.edge_lines[i] < line1) b.edge_lines.push_back(b.edge_lines[i] + line_offset);
     }
   }
   // 스케치 표시(RND-38, 1차): 억제되지 않은 스케치의 요소를 평면 위 꺾은선으로 그린다(sketch.tessellate). 참조 요소는 연하게. 평면 원점에 u(빨강)·v(초록) 축 표식.
@@ -1940,6 +1957,7 @@ Rendered render_one(App& a, int width, int height, const Json* background) {
   r.built = *cached_scene(a);
   if (background)
     for (std::size_t k = 0; k < 4; ++k) r.built.scene.background[k] = (*background)[k].get<float>();
+  apply_edge_contrast(r.built.scene, r.built);  // PNG의 흰 배경 재정의도 반영한다.
   // 안티에일리어싱(RND-18): 두 배 크기로 그려 2×2 평균으로 줄인다.
   const int ss = vs.quality.value("antialiasing", std::string("none")) == "ssaa2" ? 2 : 1;
   const int rw = width * ss, rh = height * ss;
@@ -2070,6 +2088,7 @@ std::array<int, 2> view_present(App& app) {
   float view[16], mvp[16];
   matrices(vs, *built, size[0], size[1], mvp, view);
   RenderScene scene = built->scene;  // 강조 오버레이·화면 고정 요소를 더한 사본(캐시는 그대로)
+  apply_edge_contrast(scene, *built);
   scene.pixel_scale = pixel_scale;
   add_overlay(vs, *built, scene);
   add_bc_marks(vs, *built, scene, size[1]);

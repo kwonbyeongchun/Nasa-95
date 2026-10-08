@@ -149,6 +149,10 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         m = self.menuBar().addMenu("파일(&F)")
         act(m, "새로 만들기", lambda: self.app.execute("project.new"), "Ctrl+N")
         act(m, "열기...", self._open, "Ctrl+O")
+        # 최근 파일(사용자 요청 2026-10-08): 열거나 저장한 프로젝트를 최근 순으로 10개. 리본 홈 → 열기 ▾ 에도 같은 메뉴
+        self._recent_menu = QMenu("최근 파일", self)
+        self._recent_menu.aboutToShow.connect(self._fill_recent_menu)
+        m.addMenu(self._recent_menu)
         act(m, "저장", self._save, "Ctrl+S")
         act(m, "다른 이름으로 저장...", lambda: self._save(True))
         m.addSeparator()
@@ -189,7 +193,7 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         act(m, "전체 맞춤", lambda: self._view("view.fit"), "F")
         m.addSeparator()
         for mode, label in [("shaded_edges", "음영+경계선"), ("shaded", "음영"), ("wireframe", "와이어프레임")]:
-            act(m, label, lambda md=mode: self._view("view.display_mode", mode=md))
+            act(m, label, lambda md=mode: self._set_display_mode(md))
         aa = act(m, "안티앨리어싱", lambda: self._view("view.quality", antialiasing="ssaa2" if aa.isChecked() else "none"))
         aa.setCheckable(True)
         aa.setChecked(self.app.execute("view.quality_get")["antialiasing"] != "none")
@@ -292,6 +296,12 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         self.app.execute(command, **params)
         self.viewport.present()
         self._decorate_tree()
+
+    def _set_display_mode(self, mode):
+        # 스크립트가 경계선을 숨겼어도 명시적인 선 표시 메뉴 선택은 이를 복원한다.
+        if mode in ("shaded_edges", "wireframe"):
+            self.app.execute("view.mesh_options", edges=True)
+        self._view("view.display_mode", mode=mode)
 
     def _info(self, title, data):
         QMessageBox.information(self, title, json.dumps(data, ensure_ascii=False, indent=1)[:4000])
@@ -571,12 +581,59 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
         else:
             self.statusBar().showMessage(f"요소 {hit['element']}", 5000)
 
+    # ------------------------------------------------------------ 최근 파일
+    RECENT_KEY, RECENT_MAX = "recent_projects", 10
+
+    def _recent_list(self) -> list[str]:
+        from .theme import ui_settings
+        v = ui_settings().value(self.RECENT_KEY, [])
+        if isinstance(v, str):  # QSettings(INI) 는 항목 하나짜리 목록을 글자로 돌려준다
+            v = [v] if v else []
+        return [str(x) for x in (v or [])]
+
+    def _remember_recent(self, path: str):
+        if not path:
+            return
+        from .theme import ui_settings
+        norm = str(pathlib.Path(path).resolve())
+        items = [norm] + [x for x in self._recent_list() if pathlib.Path(x).resolve() != pathlib.Path(norm)]
+        ui_settings().setValue(self.RECENT_KEY, items[: self.RECENT_MAX])
+
+    def _fill_recent_menu(self):
+        menu = self._recent_menu
+        menu.clear()
+        items = self._recent_list()
+        if not items:
+            a = menu.addAction("(최근 파일 없음)")
+            a.setEnabled(False)
+            return
+        for i, path in enumerate(items, 1):
+            exists = pathlib.Path(path).exists()
+            a = menu.addAction(f"&{i % 10}  {pathlib.Path(path).name}" + ("" if exists else "  (없음)"))
+            a.setToolTip(path)
+            a.setStatusTip(path)
+            a.setEnabled(exists)
+            a.triggered.connect(lambda _c=False, p=path: self._guard(lambda: self._open_path(p)))
+        menu.addSeparator()
+        menu.addAction("목록 지우기", self._clear_recent)
+
+    def _clear_recent(self):
+        from .theme import ui_settings
+        ui_settings().setValue(self.RECENT_KEY, [])
+
+    def _open_path(self, path: str):
+        self.app.execute("project.open", path=path)
+        self.app.execute("view.fit")
+        self._remember_recent(path)
+        self._update_title()
+
     # ------------------------------------------------------------ 동작
     def _open(self):
-        path, _ = QFileDialog.getOpenFileName(self, "프로젝트 열기", "", "NASA-95 프로젝트 (*.nasa95 *.ofep)")
+        recent = self._recent_list()
+        start = str(pathlib.Path(recent[0]).parent) if recent else ""
+        path, _ = QFileDialog.getOpenFileName(self, "프로젝트 열기", start, "NASA-95 프로젝트 (*.nasa95 *.ofep)")
         if path:
-            self.app.execute("project.open", path=path)
-            self.app.execute("view.fit")
+            self._open_path(path)
 
     def _save(self, ask=False):
         path = self.app.execute("project.info").get("path")
@@ -584,6 +641,7 @@ class MainWindow(Workspace, saribbon.SARibbonMainWindow):
             path, _ = QFileDialog.getSaveFileName(self, "프로젝트 저장", "", "NASA-95 프로젝트 (*.nasa95)")
         if path:
             self.app.execute("project.save_as", path=path)
+            self._remember_recent(path)
             self._update_title()
 
     def _import_geometry(self):
@@ -823,6 +881,7 @@ def run(argv=None) -> int:
     window.show()
     if opts.project:
         window.app.execute("project.open", path=opts.project)
+        window._remember_recent(opts.project)  # 파일 연결(더블클릭)로 연 것도 최근 파일에
         window.refresh()
     if opts.server:
         cfg = {}

@@ -211,7 +211,11 @@ class Workspace:
             row = self.ribbon.group(tab, caption)
             for name, symbol, short in entries:
                 if name in actions:
-                    self.ribbon.action(row, actions[name], symbol, short)
+                    button = self.ribbon.action(row, actions[name], symbol, short)
+                    if tab == "홈" and name == "열기" and getattr(self, "_recent_menu", None) is not None:  # 열기 ▾ = 최근 파일
+                        button.setMenu(self._recent_menu)
+                        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+                        button.setToolTip("프로젝트 열기 · ▾ 최근 파일")
         self._label_actions = {}
         numbers = self.ribbon.group("보기", "번호 표시")
         for kind, label, symbol in (("nodes", "절점 번호", "node_labels"), ("elements", "요소 번호", "element_labels")):
@@ -316,7 +320,11 @@ class Workspace:
             row = self.ribbon.group(tab, caption)
             for name, symbol, short in entries:
                 if name in actions:
-                    self.ribbon.action(row, actions[name], symbol, short)
+                    button = self.ribbon.action(row, actions[name], symbol, short)
+                    if tab == "홈" and name == "열기" and getattr(self, "_recent_menu", None) is not None:  # 열기 ▾ = 최근 파일
+                        button.setMenu(self._recent_menu)
+                        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+                        button.setToolTip("프로젝트 열기 · ▾ 최근 파일")
         db_action = self._new_action("재료 DB에서 추가", self._material_db)
         db_action.setIconText("재료 DB")
         self.ribbon.action(self.ribbon.group("모델", "재료 DB"), db_action, "material", "재료 DB")

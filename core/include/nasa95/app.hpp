@@ -113,7 +113,7 @@ class App {
   // 모델에 속하지 않는 실행 중 상태(솔버 실행 등). 저장·Undo 대상이 아니다.
   std::any& runtime(const std::string& key) { return runtime_[key]; }
 
-  static const char* version() { return "0.2.0"; }
+  static const char* version() { return "0.2.1"; }
   static const char* api_version() { return "0.1"; }
 
  private:
